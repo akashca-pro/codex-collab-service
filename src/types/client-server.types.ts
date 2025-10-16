@@ -1,3 +1,4 @@
+
 export type YjsUpdate = Uint8Array;
 
 // --- Client-to-Server Event Payloads ---
@@ -46,18 +47,6 @@ export interface ServerBroadcastChatMessage {
   text: string;
   timestamp: string; 
 }
-
-/**
- * A broadcasted CRDT update from another user.
- * @event 'doc-update'
- */
-export type ServerDocUpdate = YjsUpdate;
-
-/**
- * A broadcasted presence update from another user.
- * @event 'awareness-update'
- */
-export type ServerAwarenessUpdate = YjsUpdate;
 
 /**
  * Payload for an error message sent from the server.

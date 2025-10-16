@@ -2,14 +2,15 @@ import mongoose from "mongoose";
 import { ISnapshot } from "../interfaces/snapshot.interface";
 import { BaseRepository } from "./base.repo";
 import { ISnapshotRepo } from "./interfaces/snapshot.repo.interface";
-// Assuming this path is correct for your project
 import logger from '@/utils/pinoLogger'; 
+import { Language } from "@/const/language.const";
 
 export class SnapshotRepo extends BaseRepository<ISnapshot> implements ISnapshotRepo {
 
     async saveSnapshot(
         sessionId: string,
         snapshot: Buffer,
+        language : Language
     ): Promise<void> {
         const startTime = Date.now();
         const operation = `saveSnapshot:${this._model.modelName}`;
@@ -20,7 +21,8 @@ export class SnapshotRepo extends BaseRepository<ISnapshot> implements ISnapshot
             await this.create({
                 sessionId: sessionObjectId,
                 version: latestVersion + 1,
-                snapshot
+                snapshot,
+                language
             });
             logger.info(`[REPO] ${operation} successful`, { sessionId, duration: Date.now() - startTime });
         } catch (error) {

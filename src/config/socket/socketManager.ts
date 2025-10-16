@@ -10,6 +10,8 @@ import { ISessionService } from '@/services/interfaces/session.service.interface
 import TYPES from '@/config/inversify/types';
 import { YjsUpdate } from '@/types/client-server.types';
 import { InviteTokenPayload } from '@/types/tokenPayload.types';
+import { Language } from '@/const/language.const';
+import { ControlMessage, ControlMsgType } from '@/const/events.const';
 
 
 @injectable()
@@ -63,19 +65,30 @@ export class SocketManager {
     const { userId, sessionId } = socket.data;
     logger.info(`User ${userId} authenticated for session ${sessionId} with socket ID: ${socket.id}`);
 
-    const roomSockets = await this.#_io.in(sessionId).fetchSockets();
-    const alreadyJoined = roomSockets.find(r=>r.id === socket.id)
-    if(!alreadyJoined){
+    if (!(await this.#_io.in(sessionId).fetchSockets()).find(r => r.id === socket.id)) {
         await this.#_sessionService.joinSession(socket, this.#_io);
     }
+    socket.on('control-message', async (message: ControlMessage) => {
+        if (!socket.data.userId) return;
 
-    socket.on('doc-update',async (update: YjsUpdate) => {
-        await this.#_sessionService.updateDocument(socket, update, this.#_io);
+        switch (message.type) {
+            case ControlMsgType.DOC_UPDATE:
+                await this.#_sessionService.updateDocument(socket, message.payload, this.#_io);
+                break;
+            
+            case ControlMsgType.AWARENESS_UPDATE:
+                await this.#_sessionService.handleAwarenessUpdate(socket, message.payload);
+                break;
+
+            case ControlMsgType.CHANGE_LANGUAGE:
+                await this.#_sessionService.changeLanguage(socket, this.#_io, message.payload.language);
+                break;
+
+            case ControlMsgType.END_SESSION:
+                await this.#_sessionService.closeSession(socket, this.#_io);
+                break;
+        }
     });
-
-    socket.on('end-session',async ()=>{
-        await this.#_sessionService.closeSession(socket, this.#_io);
-    })
 
     socket.on('disconnect', async () => {
       logger.info(`User disconnected: ${userId}`);

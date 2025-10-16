@@ -1,3 +1,4 @@
+import { Language } from "@/const/language.const";
 import { Document, Types } from "mongoose";
 
 /**
@@ -7,6 +8,7 @@ import { Document, Types } from "mongoose";
 export interface ISnapshot extends Document {
   sessionId: Types.ObjectId;
   version: number; // Monotonically increasing version number for a given session
+  language : Language
   snapshot: Buffer; // BSON binary data of Y.encodeStateAsUpdate(doc)
   createdAt: Date;
 }
