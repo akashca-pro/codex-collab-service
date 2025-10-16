@@ -1,17 +1,12 @@
 
 const TYPES = {
-
-    // providers
-
     ICacheProvider : Symbol.for("ICacheProvider"),
-    IMessageProvider : Symbol.for("IMessageProvider"),
-
-    // socket manager
-    ISocketManager : Symbol.for("ISocketManager"),
-
-    // Code manage service
-    SubmitCodeExecService : Symbol.for("SubmitCodeExecService")
-
+    SocketManager : Symbol.for("SocketManager"),
+    KafkaManager : Symbol.for("KafkaManager"),
+    ISnapshotRepo : Symbol.for("ISnapshotRepo"),
+    ISessionRepo : Symbol.for("ISessionRepo"),
+    ISessionService : Symbol.for("ISessionService"),
+    RedisService : Symbol.for("RedisService")
 }
 
 export default TYPES

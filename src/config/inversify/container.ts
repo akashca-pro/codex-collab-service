@@ -3,11 +3,15 @@ import { Container } from "inversify";
 import TYPES from './types'
 import { ICacheProvider } from '@/providers/interfaces/ICacheProvider.interface';
 import { RedisCacheProvider } from '@/providers/redisCacheProvider';
-import { IMessageProvider } from '@/providers/interfaces/IMessageProvider.interface';
-import { NatsMessageProvider } from '@/providers/natsMessageProvider';
-import { SubmitCodeExecService } from '@/modules/submissions/SubmitCodeExec.service';
-import { ISocketManager } from '../socket/socketManager.interface';
 import { SocketManager } from '../socket/socketManager';
+import { KafkaManager } from '../kafka/kafkaManager';
+import { ISessionRepo } from '@/db/repos/interfaces/session.repo.interface';
+import { ISnapshotRepo } from '@/db/repos/interfaces/snapshot.repo.interface';
+import { SnapshotRepo } from '@/db/repos/snapshot.repo';
+import { SessionRepo } from '@/db/repos/session.repo';
+import { ISessionService } from '@/services/interfaces/session.service.interface';
+import { SessionService } from '@/services/session.service';
+import { RedisService } from '@/services/Redis.service';
 
 
 const container = new Container();
@@ -16,18 +20,30 @@ const container = new Container();
 container
     .bind<ICacheProvider>(TYPES.ICacheProvider)
     .to(RedisCacheProvider).inSingletonScope();
-container
-    .bind<IMessageProvider>(TYPES.IMessageProvider)
-    .to(NatsMessageProvider).inSingletonScope();
 
 // Socket manager
 container
-    .bind<ISocketManager>(TYPES.ISocketManager)
+    .bind<SocketManager>(TYPES.SocketManager)
     .to(SocketManager).inSingletonScope();
 
-// Code manage services
 container
-    .bind<SubmitCodeExecService>(TYPES.SubmitCodeExecService)
-    .to(SubmitCodeExecService).inSingletonScope();
+    .bind<KafkaManager>(TYPES.KafkaManager)
+    .toConstantValue(KafkaManager.getInstance())
+
+container
+    .bind<ISnapshotRepo>(TYPES.ISnapshotRepo)
+    .to(SnapshotRepo).inSingletonScope();
+
+container
+    .bind<ISessionRepo>(TYPES.ISessionRepo)
+    .to(SessionRepo).inSingletonScope();
+
+container
+    .bind<ISessionService>(TYPES.ISessionService)
+    .to(SessionService).inSingletonScope();
+
+container
+    .bind<RedisService>(TYPES.RedisService)
+    .to(RedisService).inSingletonScope();
 
 export default container;
