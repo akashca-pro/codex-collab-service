@@ -1,17 +1,18 @@
 import http from "http";
 import express from "express";
 import { createSocketServer } from "@/config/socket";
-import { config } from "./config";
 import logger from "@akashcapro/codex-shared-utils/dist/utils/logger";
 import container from "./config/inversify/container";
 import TYPES from "./config/inversify/types";
 import { SocketManager } from "./config/socket/socketManager";
+import { ISessionService } from "./services/interfaces/session.service.interface";
 
 const app = express();
 const server = http.createServer(app);
 const io = createSocketServer(server);
 
 const socketManager = container.get<SocketManager>(TYPES.SocketManager);
+const sessionService = container.get<ISessionService>(TYPES.ISessionService);
 
 
 const startServer = async () => {

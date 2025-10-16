@@ -19,6 +19,7 @@ import jwt from 'jsonwebtoken';
 import { randomUUID } from 'crypto';
 import { InviteTokenPayload } from '@/types/tokenPayload.types';
 import { Language } from '@/const/language.const';
+import logger from '@/utils/pinoLogger';
 
 @injectable()
 export class SessionService implements ISessionService  {
@@ -37,21 +38,26 @@ export class SessionService implements ISessionService  {
     }
 
     async createSession(ownerId: string): Promise<ResponseDTO> {
-    const isActiveSessionExist = await this.#_sessionRepo.findActiveSessionByOwnerId(ownerId);
-      if(isActiveSessionExist){
-          return {
-              data : null,
-              success : false,
-              errorMessage : SESSION_ERROR_MESSAGES.SESSION_ALREADY_EXIST
-          }
-      }
-      const session = await this.#_sessionRepo.create({
-        ownerId,
-      })
-      const inviteToken = this.generateInviteToken(session._id.toString());
-      return {
-        data : { inviteToken },
-        success : true,
+    try {
+        const isActiveSessionExist = await this.#_sessionRepo.findActiveSessionByOwnerId(ownerId);
+        if(isActiveSessionExist){
+            return {
+                data : null,
+                success : false,
+                errorMessage : SESSION_ERROR_MESSAGES.SESSION_ALREADY_EXIST
+            }
+        }
+        const session = await this.#_sessionRepo.create({
+          ownerId,
+        })
+        const inviteToken = this.generateInviteToken(session._id.toString());
+        return {
+          data : { inviteToken },
+          success : true,
+        }
+      } catch (error) {
+        logger.error('Failed to create session.', { error });
+        return { data: null, success: false, errorMessage: 'A server error occurred while creating the session.' };
       }
     }
 
@@ -59,18 +65,23 @@ export class SessionService implements ISessionService  {
       socket : Socket,
       io : Server
     ): Promise<void> {
-      const { userId, sessionId } = socket.data; 
-      socket.join(sessionId);
-      await this.#_redisService.addParticipantToSession(sessionId, userId);
-      await this.#_redisService.setUserSocketInfo(userId, {
-        podName : config.PODNAME,
-        socketId : socket.id
-      })
-      const { doc, awareness } = await this.getOrLoadSessionState(sessionId, io);
-      const docUpdate = Y.encodeStateAsUpdate(doc);
-      const awarenessUpdate = encodeAwarenessUpdate(awareness, Array.from(awareness.getStates().keys()));
-      const initialState: ServerInitialState = { docUpdate, awarenessUpdate };
-      socket.emit('initial-state', initialState);
+    try {
+        const { userId, sessionId } = socket.data; 
+        socket.join(sessionId);
+        await this.#_redisService.addParticipantToSession(sessionId, userId);
+        await this.#_redisService.setUserSocketInfo(userId, {
+          podName : config.PODNAME,
+          socketId : socket.id
+        })
+        const { doc, awareness } = await this.getOrLoadSessionState(sessionId, io);
+        const docUpdate = Y.encodeStateAsUpdate(doc);
+        const awarenessUpdate = encodeAwarenessUpdate(awareness, Array.from(awareness.getStates().keys()));
+        const initialState: ServerInitialState = { docUpdate, awarenessUpdate };
+        socket.emit('initial-state', initialState);
+      } catch (error) {
+        logger.error(`Error during joinSession for user ${socket.data.userId}.`, { error });
+        socket.emit('error', { message: 'Failed to join the session due to a server error.' });
+      }
     }
 
     async handleAwarenessUpdate(
@@ -82,7 +93,14 @@ export class SessionService implements ISessionService  {
 
         if (awareness) {
             applyAwarenessUpdate(awareness, update, socket.id);
-            this.#_redisService.publishAwarenessUpdate(sessionId, update);
+          try {
+            await this.#_redisService.publishAwarenessUpdate(sessionId, update);
+          } catch (error) {
+            socket.emit('error', {
+            message: 'Your recent change could not be saved due to a server issue. Please try refreshing.',
+            code: 500
+          });  
+          }
         }
     }
 
@@ -102,40 +120,54 @@ export class SessionService implements ISessionService  {
           userId,
           operation: Buffer.from(update).toString('base64'),
         }, sessionId);
-        await this.#_redisService.publishDocUpdate(sessionId, update)
+        try {
+          await this.#_redisService.publishDocUpdate(sessionId, update)
+        } catch (error) {
+          socket.emit('error', {
+          message: 'Your recent change could not be saved due to a server issue. Please try refreshing.',
+          code: 500
+         });  
+        }
     }
 
-    async leaveSession(
+async leaveSession(
       socket: Socket,
-      io : Server
     ): Promise<void> {
       const { userId, sessionId } = socket.data;
       if (!userId || !sessionId) return;
-      socket.leave(sessionId);
-      await this.#_sessionRepo.removeParticipant(sessionId, userId);
-      await this.#_redisService.removeParticipantFromSession(sessionId, userId);
+      try {
+        socket.leave(sessionId);
+        await this.#_sessionRepo.removeParticipant(sessionId, userId);
+        await this.#_redisService.removeParticipantFromSession(sessionId, userId);
 
-      const awareness = this.#_activeAwareness.get(sessionId);
-      if (awareness) {
-          const states = Array.from(awareness.getStates().values());
-          const disconnectedClient = states.find(state => state.user?.id === userId);
-          if (disconnectedClient) {
-            removeAwarenessStates(awareness, [disconnectedClient.clientID], 'disconnect');
+        const awareness = this.#_activeAwareness.get(sessionId);
+        if (awareness) {
+          const states = Array.from(awareness.getStates().entries());
+          const disconnectedEntry = states.find(([, state]) => state.user?.id === userId);
+
+          if (disconnectedEntry) {
+            const clientID = disconnectedEntry[0];
+            removeAwarenessStates(awareness, [clientID], 'disconnect');
+            const removalUpdate = encodeAwarenessUpdate(awareness, [clientID]);
+            await this.#_redisService.publishAwarenessUpdate(sessionId, removalUpdate);
           }
-      }
+        }
 
-      const participantCount = await this.#_redisService.getParticipantCount(sessionId);
-      if(participantCount === 0){
-        const doc = this.#_activeDocs.get(sessionId);
-        if (doc) {
+        const participantCount = await this.#_redisService.getParticipantCount(sessionId);
+        if (participantCount === 0) {
+          const doc = this.#_activeDocs.get(sessionId);
+          if (doc) {
             const finalState = Y.encodeStateAsUpdate(doc);
-            const language = this.#_activeSessionMetadata.get(sessionId)?.language
+            const language = this.#_activeSessionMetadata.get(sessionId)?.language;
             await this.#_snapshotRepo.saveSnapshot(sessionId, Buffer.from(finalState), language!);
             doc.destroy();
             awareness?.destroy();
             this.#_activeDocs.delete(sessionId);
             this.#_activeAwareness.delete(sessionId);
+          }
         }
+      } catch (error) {
+        logger.error(`Error during leaveSession for user ${userId} in session ${sessionId}.`, { error });
       }
     }
 
@@ -144,21 +176,30 @@ export class SessionService implements ISessionService  {
       io : Server
     ): Promise<void> {
       const { userId, sessionId } = socket.data;
+      try {
       const session = await this.#_sessionRepo.findSessionById(sessionId);
       if (!session || session.ownerId !== userId) {
         socket.emit('error', { message: 'Only the session owner can close the session.' });
         return;
       }
+      const awareness = this.#_activeAwareness.get(sessionId);
       const doc = this.#_activeDocs.get(sessionId);
       if (doc) {
         const finalState = Y.encodeStateAsUpdate(doc);
         const language = this.#_activeSessionMetadata.get(sessionId)?.language
         await this.#_snapshotRepo.saveSnapshot(sessionId, Buffer.from(finalState), language!);
         doc.destroy();
+        awareness?.destroy(); 
         this.#_activeDocs.delete(sessionId);
+        this.#_activeAwareness.delete(sessionId);
+        this.#_activeSessionMetadata.delete(sessionId);
       }
       await this.#_sessionRepo.closeSession(sessionId, userId);
       io.in(sessionId).disconnectSockets(true);
+      } catch (error) {
+        logger.error(`Error during closeSession for user ${userId} in session ${sessionId}.`, { error });
+        socket.emit('error', { message: 'Failed to close the session due to a server error.' });
+      }
     }
 
     async changeLanguage(
@@ -166,22 +207,27 @@ export class SessionService implements ISessionService  {
       io: Server,
       language: Language
     ): Promise<void> {
-      const { userId, sessionId } = socket.data;
-      const session = await this.#_sessionRepo.findSessionById(sessionId);
-      if (!session || session.ownerId !== userId) {
-        socket.emit('error', { message: 'Only the session owner can change the language.' });
-        return;
+        const { userId, sessionId } = socket.data;
+      try {
+        const session = await this.#_sessionRepo.findSessionById(sessionId);
+        if (!session || session.ownerId !== userId) {
+          socket.emit('error', { message: 'Only the session owner can change the language.' });
+          return;
+        }
+        const metadata = this.#_activeSessionMetadata.get(sessionId);
+        if (!metadata) {
+          socket.emit('error', { message: 'Session not found or inactive.' });
+          return;
+        }
+        if (metadata) {
+          metadata.language = language;
+        }
+        await this.#_sessionRepo.updateSessionDetails(sessionId, {language})
+        await this.#_redisService.publishMetadataUpdate(sessionId, metadata);
+      } catch (error) {
+        logger.error(`Error during changeLanguage for user ${userId} in session ${sessionId}.`, { error });
+        socket.emit('error', { message: 'Failed to change the language due to a server error.' });
       }
-      const metadata = this.#_activeSessionMetadata.get(sessionId);
-      if (!metadata) {
-        socket.emit('error', { message: 'Session not found or inactive.' });
-        return;
-      }
-      if (metadata) {
-        metadata.language = language;
-      }
-      await this.#_sessionRepo.updateSessionDetails(sessionId, {language})
-      await this.#_redisService.publishMetadataUpdate(sessionId, metadata);
     }
 
   private async getOrLoadSessionState(sessionId: string, io : Server): Promise<{doc: Y.Doc, awareness: Awareness}> {
@@ -244,4 +290,36 @@ export class SessionService implements ISessionService  {
       expiresIn: '1h', // Set expiration to 1 hour
     });
   }
+
+  public async shutdownAndSaveAllSessions(): Promise<void> {
+    logger.info(`Graceful shutdown initiated. Saving all active sessions...`);
+    const activeSessionIds = Array.from(this.#_activeDocs.keys());
+    
+    if (activeSessionIds.length === 0) {
+      logger.info('No active sessions to save. Shutting down.');
+      return;
+    }
+
+    const savePromises = activeSessionIds.map(async (sessionId) => {
+      const doc = this.#_activeDocs.get(sessionId);
+      const metadata = this.#_activeSessionMetadata.get(sessionId);
+
+      if (doc && metadata) {
+        try {
+          const finalState = Y.encodeStateAsUpdate(doc);
+          await this.#_snapshotRepo.saveSnapshot(
+            sessionId,
+            Buffer.from(finalState),
+            metadata.language
+          );
+          logger.info(`Successfully saved snapshot for session ${sessionId}.`);
+        } catch (error) {
+          logger.error(`Failed to save snapshot for session ${sessionId} during shutdown.`, { error });
+        }
+      }
+    });
+
+    await Promise.all(savePromises);
+    logger.info(`Finished saving ${activeSessionIds.length} active sessions.`);
+    }
 }

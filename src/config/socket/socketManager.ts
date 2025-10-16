@@ -1,4 +1,3 @@
-// src/config/socket/socketManager.ts
 import { Server, Socket } from 'socket.io';
 import { injectable, inject } from 'inversify';
 import logger from '@akashcapro/codex-shared-utils/dist/utils/logger';
@@ -8,9 +7,7 @@ import { createAdapter } from '@socket.io/redis-adapter';
 import jwt from 'jsonwebtoken';
 import { ISessionService } from '@/services/interfaces/session.service.interface';
 import TYPES from '@/config/inversify/types';
-import { YjsUpdate } from '@/types/client-server.types';
 import { InviteTokenPayload } from '@/types/tokenPayload.types';
-import { Language } from '@/const/language.const';
 import { ControlMessage, ControlMsgType } from '@/const/events.const';
 
 
@@ -92,7 +89,7 @@ export class SocketManager {
 
     socket.on('disconnect', async () => {
       logger.info(`User disconnected: ${userId}`);
-      await this.#_sessionService.leaveSession(socket, this.#_io);
+      await this.#_sessionService.leaveSession(socket);
     });
   }
 }

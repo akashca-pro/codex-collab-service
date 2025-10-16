@@ -28,7 +28,6 @@ export interface ISessionService {
 
     leaveSession(
         socket : Socket,
-        io : Server
     ) : Promise<void>
 
     changeLanguage(
