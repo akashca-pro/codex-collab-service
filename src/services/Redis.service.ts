@@ -1,14 +1,17 @@
 import { UserSocketInfo } from '../types/redis.types'; // Assuming types are in a 'types.ts' file
 import { YjsUpdate } from '@/types/client-server.types'
-import Redis from 'ioredis';
+import redis from '@/config/redis/index';
 import { ActiveSessionMetadata } from '@/types/document.types';
+import { injectable } from 'inversify';
+import Redis from 'ioredis';
 
+@injectable()
 export class RedisService {
   #_publisher: Redis;
   #_subscriber: Redis;
   #_delay = (ms: number) => new Promise(res => setTimeout(res, ms));
 
-  constructor(redis : Redis) {
+  constructor() {
     this.#_publisher = redis
     this.#_subscriber = this.#_publisher.duplicate();
   }

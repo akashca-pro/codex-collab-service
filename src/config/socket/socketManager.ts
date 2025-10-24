@@ -51,7 +51,7 @@ export class SocketManager {
         return next(new Error('Authentication error: Invalid token payload.'));
       }
       socket.data.sessionId = decoded.sessionId;
-      next(); // Success
+      next();
     } catch (error) {
       logger.error('JWT invite token verification failed', error);
       next(new Error('Authentication error: Invalid or expired token.'));

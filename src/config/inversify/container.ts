@@ -12,6 +12,7 @@ import { SessionRepo } from '@/db/repos/session.repo';
 import { ISessionService } from '@/services/interfaces/session.service.interface';
 import { SessionService } from '@/services/session.service';
 import { RedisService } from '@/services/Redis.service';
+import { SessionHandler } from '@/gRPC/session.handler';
 
 
 const container = new Container();
@@ -45,5 +46,9 @@ container
 container
     .bind<RedisService>(TYPES.RedisService)
     .to(RedisService).inSingletonScope();
+
+container
+    .bind<SessionHandler>(TYPES.SessionHandler)
+    .to(SessionHandler).inSingletonScope();
 
 export default container;

@@ -6,7 +6,8 @@ const TYPES = {
     ISnapshotRepo : Symbol.for("ISnapshotRepo"),
     ISessionRepo : Symbol.for("ISessionRepo"),
     ISessionService : Symbol.for("ISessionService"),
-    RedisService : Symbol.for("RedisService")
+    RedisService : Symbol.for("RedisService"),
+    SessionHandler : Symbol.for("SessionHandler")
 }
 
 export default TYPES

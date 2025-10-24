@@ -7,7 +7,6 @@ export interface ISessionService {
 
     createSession(
         ownerId : string,
-        documentId : string,
     ) : Promise<ResponseDTO>;
 
     closeSession(

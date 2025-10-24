@@ -104,7 +104,6 @@ export class SessionService implements ISessionService  {
         }
     }
 
-
     async updateDocument(
       socket : Socket,
       update: YjsUpdate,
@@ -130,7 +129,7 @@ export class SessionService implements ISessionService  {
         }
     }
 
-async leaveSession(
+    async leaveSession(
       socket: Socket,
     ): Promise<void> {
       const { userId, sessionId } = socket.data;
@@ -228,7 +227,7 @@ async leaveSession(
         logger.error(`Error during changeLanguage for user ${userId} in session ${sessionId}.`, { error });
         socket.emit('error', { message: 'Failed to change the language due to a server error.' });
       }
-    }
+    }    
 
   private async getOrLoadSessionState(sessionId: string, io : Server): Promise<{doc: Y.Doc, awareness: Awareness}> {
       if (this.#_activeDocs.has(sessionId)) {
@@ -260,7 +259,6 @@ async leaveSession(
         Y.applyUpdate(doc, update, 'redis');
         io.to(sessionId).emit('doc-update', update);
     });
-
     await this.#_redisService.subscribeToMetadataUpdates(sessionId, (incomingMetadata: ActiveSessionMetadata) => {
       this.#_activeSessionMetadata.set(sessionId, incomingMetadata);
       io.to(sessionId).emit('metadata-changed', incomingMetadata);
@@ -287,7 +285,7 @@ async leaveSession(
     };
     
     return jwt.sign(payload, config.JWT_INVITE_TOKEN_SECRET, {
-      expiresIn: '1h', // Set expiration to 1 hour
+      expiresIn: '1h',
     });
   }
 

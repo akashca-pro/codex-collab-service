@@ -1,8 +1,12 @@
 import pino from 'pino'
 import { context, trace } from '@opentelemetry/api'
+import { config } from '@/config'
 
 const logger = pino({
   level: process.env.NODE_ENV === 'production' ? 'info' : 'debug',
+  base : {
+    service : config.SERVICE_NAME
+  },
   transport: process.env.NODE_ENV !== 'production'
     ? { target: 'pino-pretty', options: { colorize: true, translateTime: 'SYS:standard' } }
     : undefined,
