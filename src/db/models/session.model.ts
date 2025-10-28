@@ -6,8 +6,8 @@ import { LANGUAGE } from "@/const/language.const";
 const SessionSchema = new Schema<ISession>({
     ownerId : { type : String, required : true },
     participants : { type : [String], default : [] },
-    language : { type : String, enum : Object.values(LANGUAGE), required : true },
-    status : { type : String, required : true, enum : Object.values(STATUS), default : STATUS.ACTIVE },
+    language : { type : String, enum : Object.values(LANGUAGE), default : LANGUAGE.JAVASCRIPT },
+    status : { type : String, enum : Object.values(STATUS), default : STATUS.ACTIVE },
     endedAt : { type : Date, default : null }
 },{ timestamps : true })
 

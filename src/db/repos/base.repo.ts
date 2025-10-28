@@ -1,6 +1,5 @@
 import { Model, Document, FilterQuery, UpdateQuery, LeanDocument, SortOrder } from 'mongoose';
 import logger from '@/utils/pinoLogger'; // Import the logger
-import { Sort } from 'mongodb';
 
 /**
  * Abstract base class for a generic repository.

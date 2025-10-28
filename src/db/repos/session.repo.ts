@@ -3,9 +3,14 @@ import { ISession } from "../interfaces/session.interface";
 import { BaseRepository } from "./base.repo";
 import { ISessionRepo } from "./interfaces/session.repo.interface";
 import { STATUS } from '@/const/status.const';
+import { SessionModel } from '../models/session.model';
 
 
 export class SessionRepo extends BaseRepository<ISession> implements ISessionRepo {
+
+    constructor(){
+        super(SessionModel);
+    }
 
     async findSessionById(
         sessionId: string

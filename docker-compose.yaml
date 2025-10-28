@@ -1,0 +1,94 @@
+services:
+  # Redis
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  #kafka
+  kafka:
+    image: bitnami/kafka:3.7.1
+    container_name: kafka
+    ports:
+      - "9092:9092"
+      - "9094:9094"
+    environment:
+      KAFKA_ENABLE_KRAFT: ${KAFKA_ENABLE_KRAFT}
+      KAFKA_CFG_NODE_ID: ${KAFKA_CFG_NODE_ID}
+      KAFKA_CFG_PROCESS_ROLES: ${KAFKA_CFG_PROCESS_ROLES}
+      KAFKA_CFG_LISTENERS: ${KAFKA_CFG_LISTENERS}
+      KAFKA_CFG_ADVERTISED_LISTENERS: ${KAFKA_CFG_ADVERTISED_LISTENERS}
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: ${KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP}
+      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: ${KAFKA_CFG_CONTROLLER_QUORUM_VOTERS}
+      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: ${KAFKA_CFG_CONTROLLER_LISTENER_NAMES}
+      KAFKA_CFG_INTER_BROKER_LISTENER_NAME: ${KAFKA_CFG_INTER_BROKER_LISTENER_NAME}
+      KAFKA_CFG_OFFSETS_TOPIC_REPLICATION_FACTOR: ${KAFKA_CFG_OFFSETS_TOPIC_REPLICATION_FACTOR}
+      KAFKA_CFG_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: ${KAFKA_CFG_TRANSACTION_STATE_LOG_REPLICATION_FACTOR}
+      KAFKA_CFG_TRANSACTION_STATE_LOG_MIN_ISR: ${KAFKA_CFG_TRANSACTION_STATE_LOG_MIN_ISR}
+      ALLOW_PLAINTEXT_LISTENER: ${ALLOW_PLAINTEXT_LISTENER}
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "kafka-topics.sh", "--bootstrap-server", "kafka:9092", "--list"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+  #kafka-ui
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: ${KAFKA_CLUSTERS_0_NAME}
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: ${KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS}
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - app-network
+  #collab-service
+  collab-service:
+    build:
+      context: ./
+      dockerfile: Dockerfile
+    container_name: collab-service
+    environment:
+      JWT_ACCESS_TOKEN_SECRET: ${JWT_ACCESS_TOKEN_SECRET}
+      JWT_ACCESS_TOKEN_EXPIRY: ${JWT_ACCESS_TOKEN_EXPIRY}
+      JWT_INVITE_TOKEN_SECRET: ${JWT_INVITE_TOKEN_SECRET}
+      SOCKET_MAP_CACHE_EXPIRY: ${SOCKET_MAP_CACHE_EXPIRY}
+      GRPC_COLLAB_SERVICE_URL: ${GRPC_COLLAB_SERVICE_URL}
+      TOKEN_NAME: ${TOKEN_NAME}
+      REDIS_URL: ${REDIS_URL}
+      WSS_PORT: ${WSS_PORT}
+      CLIENT_URL: ${CLIENT_URL}
+      KAFKA_COLLAB_SERVICE_CLIENT_ID: ${KAFKA_COLLAB_SERVICE_CLIENT_ID}
+      KAFKA_BROKERS: ${KAFKA_BROKERS}
+      KAFKA_MAX_RETRIES: ${KAFKA_MAX_RETRIES}
+      KAFKA_RETRY_QUEUE_CAP: ${KAFKA_RETRY_QUEUE_CAP}
+      COLLAB_SERVICE_DATABASE_URL: ${COLLAB_SERVICE_DATABASE_URL}
+      PODNAME: ${PODNAME}
+      SOCKET_PORT: ${SOCKET_PORT}
+    volumes:
+      - ../../localhost+1-key.pem:/app/localhost+1-key.pem
+      - ../../localhost+1.pem:/app/localhost+1.pem
+    ports:
+      - 50054:50054
+      - 5001:5001
+    networks:
+      - app-network
+    depends_on:
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+networks:
+  app-network:

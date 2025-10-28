@@ -18,6 +18,7 @@ interface Config {
     JWT_INVITE_TOKEN_SECRET : string;
     PODNAME : string;
     GRPC_COLLAB_SERVICE_URL : string;
+    SOCKET_PORT : number;
 }
 
 export const config : Config = {
@@ -37,4 +38,5 @@ export const config : Config = {
     JWT_INVITE_TOKEN_SECRET : process.env.JWT_INVITE_TOKEN_SECRET!,
     PODNAME : process.env.PODNAME!,
     GRPC_COLLAB_SERVICE_URL : process.env.GRPC_COLLAB_SERVICE_URL!,
+    SOCKET_PORT : Number(process.env.SOCKET_PORT),
 }

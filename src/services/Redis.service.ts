@@ -13,7 +13,7 @@ export class RedisService {
 
   constructor() {
     this.#_publisher = redis
-    this.#_subscriber = this.#_publisher.duplicate();
+    this.#_subscriber = this.#_publisher.duplicate(); 
   }
 
   public async connect(): Promise<void> {
@@ -45,42 +45,6 @@ export class RedisService {
     return this.#_publisher.scard(key);
   }
 
-  public async publishDocUpdate(sessionId: string, update: YjsUpdate): Promise<void> {
-    const channel = `session:doc-updates:${sessionId}`;
-    await this.publishWithRetry(channel, Buffer.from(update));
-  }
-
-  public async subscribeToDocUpdates(
-    sessionId: string,
-    callback: (update: YjsUpdate) => void
-  ): Promise<void> {
-    const channel = `session:doc-updates:${sessionId}`;
-    this.#_subscriber.subscribe(channel);
-    this.#_subscriber.on('message', (_channel, message) => {
-        if (_channel === channel && message) {
-            callback(new Uint8Array(Buffer.from(message, 'binary')));
-        }
-    });
-  }
-
-  public async publishAwarenessUpdate(sessionId: string, update: YjsUpdate): Promise<void> {
-    const channel = `session:awareness-updates:${sessionId}`;
-    await this.publishWithRetry(channel, Buffer.from(update));
-  }
-
-  public async subscribeToAwarenessUpdates(
-    sessionId: string,
-    callback: (update: YjsUpdate) => void
-  ): Promise<void> {
-    const channel = `session:awareness-updates:${sessionId}`;
-    this.#_subscriber.subscribe(channel);
-    this.#_subscriber.on('message', (_channel, message) => {
-        if (_channel === channel && message) {
-            callback(new Uint8Array(Buffer.from(message, 'binary')));
-        }
-    });
-  }
-
   public async publishMetadataUpdate(
     sessionId: string,
     metadata: ActiveSessionMetadata
@@ -97,9 +61,34 @@ export class RedisService {
     this.#_subscriber.subscribe(channel);
     this.#_subscriber.on('message', (_channel, message) => {
       if (_channel === channel && message) {
-        // Parse the JSON string back into an object
         const metadata = JSON.parse(message) as ActiveSessionMetadata;
         callback(metadata);
+      }
+    });
+  }
+
+  public async publishSessionClosed(sessionId: string): Promise<void> {
+    const channel = `session:close-event:${sessionId}`;
+    const payload = JSON.stringify({
+      sessionId
+    });
+    await this.publishWithRetry(channel, payload);
+  }
+
+  public async subscribeToSessionClosed(
+    sessionId : string,
+    callback: (payload: {sessionId: string }) => void
+  ): Promise<void> {
+    const channel = `session:close-event:${sessionId}`;
+    this.#_subscriber.subscribe(channel);
+    this.#_subscriber.on('message', (_channel, message) => {
+      if (_channel === channel && message) {
+        try {
+          const event = JSON.parse(message);
+          callback(event);
+        } catch (err) {
+          console.error('Failed to parse session event', err);
+        }
       }
     });
   }

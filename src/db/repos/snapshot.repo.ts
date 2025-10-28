@@ -4,8 +4,13 @@ import { BaseRepository } from "./base.repo";
 import { ISnapshotRepo } from "./interfaces/snapshot.repo.interface";
 import logger from '@/utils/pinoLogger'; 
 import { Language } from "@/const/language.const";
+import { SnapshotModel } from "../models/snapshot.model";
 
 export class SnapshotRepo extends BaseRepository<ISnapshot> implements ISnapshotRepo {
+
+    constructor(){
+        super(SnapshotModel)
+    }
 
     async saveSnapshot(
         sessionId: string,

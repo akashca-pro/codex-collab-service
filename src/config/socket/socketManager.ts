@@ -7,8 +7,10 @@ import { createAdapter } from '@socket.io/redis-adapter';
 import jwt from 'jsonwebtoken';
 import { ISessionService } from '@/services/interfaces/session.service.interface';
 import TYPES from '@/config/inversify/types';
-import { InviteTokenPayload } from '@/types/tokenPayload.types';
+import { AccessTokenPayload, InviteTokenPayload } from '@/types/tokenPayload.types';
 import { ControlMessage, ControlMsgType } from '@/const/events.const';
+import { parseCookies } from '@/utils/cookieParser';
+import { ActiveSessionMetadata } from '@/types/document.types';
 
 
 @injectable()
@@ -29,7 +31,6 @@ export class SocketManager {
     const subClient = pubClient.duplicate();
     await Promise.all([pubClient.connect(), subClient.connect()]);
     this.#_io.adapter(createAdapter(pubClient, subClient));
-
     this.#_io.use(this.authMiddleware.bind(this));
 
     this.#_io.on('connection', (socket: Socket) => {
@@ -41,16 +42,27 @@ export class SocketManager {
    * Middleware to verify the invite token for every new connection.
    */
   private authMiddleware(socket: Socket, next: (err?: Error) => void): void {
-    const token = socket.handshake.auth.token;
-    if (!token) {
-      return next(new Error('Authentication error: No token provided.'));
-    }
+    const inviteToken = socket.handshake.auth.token;
+    const cookieHeader = socket.handshake.headers.cookie;
+    const cookies = parseCookies(cookieHeader);
+    const accessToken = cookies['accessToken'];
+    if (!inviteToken || !accessToken) {
+            let missing = [];
+            if (!inviteToken) missing.push("invite token");
+            if (!accessToken) missing.push("access token (cookie or auth)");
+            logger.warn('Socket Auth Middleware: Missing required tokens.', { missing: missing.join(', ') });
+            return next(new Error(`Authentication error: Missing ${missing.join(' and ')}.`));
+        }
     try {
-      const decoded = jwt.verify(token, config.JWT_ACCESS_TOKEN_SECRET) as InviteTokenPayload;
-      if (!decoded.sessionId) {
+      const decodedInviteId = jwt.verify(inviteToken, config.JWT_INVITE_TOKEN_SECRET) as InviteTokenPayload;
+      const decodedAccessToken = jwt.verify(accessToken, config.JWT_ACCESS_TOKEN_SECRET) as AccessTokenPayload;
+      if (!decodedInviteId.sessionId) {
         return next(new Error('Authentication error: Invalid token payload.'));
       }
-      socket.data.sessionId = decoded.sessionId;
+      socket.data.sessionId = decodedInviteId.sessionId;
+      socket.data.ownerId = decodedInviteId.ownerId;
+      socket.data.userId = decodedAccessToken.userId;
+      socket.data.email = decodedAccessToken.email;
       next();
     } catch (error) {
       logger.error('JWT invite token verification failed', error);
@@ -59,36 +71,42 @@ export class SocketManager {
   }
 
   private async handleConnection(socket: Socket): Promise<void> {
-    const { userId, sessionId } = socket.data;
-    logger.info(`User ${userId} authenticated for session ${sessionId} with socket ID: ${socket.id}`);
+    const { ownerId, sessionId } = socket.data;
+    logger.info(`User with ownerId ${ownerId} authenticated for session ${sessionId} with socket ID: ${socket.id}`);
 
     if (!(await this.#_io.in(sessionId).fetchSockets()).find(r => r.id === socket.id)) {
         await this.#_sessionService.joinSession(socket, this.#_io);
     }
-    socket.on('control-message', async (message: ControlMessage) => {
-        if (!socket.data.userId) return;
+    socket.on('doc-update', async (update : any) => {
+      const docUpdate = update instanceof Uint8Array 
+        ? update 
+        : new Uint8Array(Buffer.isBuffer(update) ? update : Buffer.from(update));
+        console.log(update);
+        console.log(docUpdate)
+      await this.#_sessionService.updateDocument(socket, docUpdate, this.#_io);
+    })
 
-        switch (message.type) {
-            case ControlMsgType.DOC_UPDATE:
-                await this.#_sessionService.updateDocument(socket, message.payload, this.#_io);
-                break;
-            
-            case ControlMsgType.AWARENESS_UPDATE:
-                await this.#_sessionService.handleAwarenessUpdate(socket, message.payload);
-                break;
+    socket.on('awareness-update', async (update : any) => {
+      const awarenessUpdate = update instanceof Uint8Array 
+        ? update 
+        : new Uint8Array(Buffer.isBuffer(update) ? update : Buffer.from(update));
+      await this.#_sessionService.handleAwarenessUpdate(socket, awarenessUpdate);
+    })
 
-            case ControlMsgType.CHANGE_LANGUAGE:
-                await this.#_sessionService.changeLanguage(socket, this.#_io, message.payload.language);
-                break;
+    socket.on('metadata-changed', async (update : ActiveSessionMetadata) => {
+      await this.#_sessionService.changeLanguage(socket, this.#_io, update.language)
+    })
 
-            case ControlMsgType.END_SESSION:
-                await this.#_sessionService.closeSession(socket, this.#_io);
-                break;
-        }
-    });
+    socket.on('leave-session', async () => {
+      await this.#_sessionService.leaveSession(socket);
+    })
+
+    socket.on('close-session', async () => {
+      await this.#_sessionService.closeSession(socket, this.#_io);
+    })
 
     socket.on('disconnect', async () => {
-      logger.info(`User disconnected: ${userId}`);
+      logger.info(`User disconnected: ${ownerId}`);
       await this.#_sessionService.leaveSession(socket);
     });
   }

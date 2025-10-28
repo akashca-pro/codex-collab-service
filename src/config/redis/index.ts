@@ -1,6 +1,6 @@
 import Redis from 'ioredis';
 import { config } from '@/config';
-import logger from '@akashcapro/codex-shared-utils/dist/utils/logger';
+import logger from '@/utils/pinoLogger';
 import { RedisEvents } from '@/config/redis/redis.enum';
 
 class RedisClient {

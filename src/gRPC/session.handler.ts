@@ -31,10 +31,10 @@ export class SessionHandler {
             const result = await this.#_sessionService.createSession(call.request.ownerId);
             if(!result.success){
                 logger.warn(`[gRPC] ${method} failed: ${result.errorMessage}`);
-                callback({
+                return callback({
                     code : mapMessageToGrpcStatus(result.errorMessage!),
                     message : result.errorMessage
-                });
+                },null);
             }
             logger.info(`[gRPC] ${method} completed successfully`, { inviteToken : result.data.inviteToken })
             return callback(null, result.data);
