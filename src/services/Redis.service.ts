@@ -1,0 +1,111 @@
+import { UserSocketInfo } from '../types/redis.types'; // Assuming types are in a 'types.ts' file
+import { YjsUpdate } from '@/types/client-server.types'
+import redis from '@/config/redis/index';
+import { ActiveSessionMetadata } from '@/types/document.types';
+import { injectable } from 'inversify';
+import Redis from 'ioredis';
+
+@injectable()
+export class RedisService {
+  #_publisher: Redis;
+  #_subscriber: Redis;
+  #_delay = (ms: number) => new Promise(res => setTimeout(res, ms));
+
+  constructor() {
+    this.#_publisher = redis
+    this.#_subscriber = this.#_publisher.duplicate(); 
+  }
+
+  public async connect(): Promise<void> {
+    await Promise.all([this.#_publisher.connect(), this.#_subscriber.connect()]);
+    console.log('Connected to Redis clients.');
+  }
+
+  public async setUserSocketInfo(userId: string, info: UserSocketInfo): Promise<void> {
+    const key = `user:socket:${userId}`;
+    await this.#_publisher.hset(key, info);
+  }
+
+  public async getUserSocketInfo(userId: string): Promise<UserSocketInfo | null> {
+    const key = `user:socket:${userId}`;
+    const result = await this.#_publisher.hgetall(key);
+    return result? (result as unknown as UserSocketInfo) : null;
+  }
+
+  public async addParticipantToSession(sessionId: string, userId: string): Promise<void> {
+    await this.#_publisher.sadd(`session:participants:${sessionId}`, userId);
+  }
+
+  public async removeParticipantFromSession(sessionId: string, userId: string): Promise<void> {
+    await this.#_publisher.srem(`session:participants:${sessionId}`, userId);
+  }
+
+  public async getParticipantCount(sessionId: string): Promise<number> {
+    const key = `session:participants:${sessionId}`;
+    return this.#_publisher.scard(key);
+  }
+
+  public async publishMetadataUpdate(
+    sessionId: string,
+    metadata: ActiveSessionMetadata
+  ): Promise<void> {
+    const channel = `session:metadata-updates:${sessionId}`;
+    await this.publishWithRetry(channel, JSON.stringify(metadata));
+  }
+
+  public async subscribeToMetadataUpdates(
+    sessionId: string,
+    callback: (metadata: ActiveSessionMetadata) => void
+  ): Promise<void> {
+    const channel = `session:metadata-updates:${sessionId}`;
+    this.#_subscriber.subscribe(channel);
+    this.#_subscriber.on('message', (_channel, message) => {
+      if (_channel === channel && message) {
+        const metadata = JSON.parse(message) as ActiveSessionMetadata;
+        callback(metadata);
+      }
+    });
+  }
+
+  public async publishSessionClosed(sessionId: string): Promise<void> {
+    const channel = `session:close-event:${sessionId}`;
+    const payload = JSON.stringify({
+      sessionId
+    });
+    await this.publishWithRetry(channel, payload);
+  }
+
+  public async subscribeToSessionClosed(
+    sessionId : string,
+    callback: (payload: {sessionId: string }) => void
+  ): Promise<void> {
+    const channel = `session:close-event:${sessionId}`;
+    this.#_subscriber.subscribe(channel);
+    this.#_subscriber.on('message', (_channel, message) => {
+      if (_channel === channel && message) {
+        try {
+          const event = JSON.parse(message);
+          callback(event);
+        } catch (err) {
+          console.error('Failed to parse session event', err);
+        }
+      }
+    });
+  }
+
+  private async publishWithRetry(channel: string, message: string | Buffer, retries = 3): Promise<void> {
+      for (let i = 0; i < retries; i++) {
+        try {
+          await this.#_publisher.publish(channel, message);
+          return; // Success, exit the loop
+        } catch (error) {
+          console.error(`Redis publish to channel ${channel} failed. Attempt ${i + 1}/${retries}.`, error);
+          if (i === retries - 1) {
+            // If this was the last attempt, re-throw the error
+            throw error;
+          }
+          await this.#_delay(50 * Math.pow(2, i));
+        }
+      }
+    }
+}
