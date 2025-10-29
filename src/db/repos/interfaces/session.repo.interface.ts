@@ -14,4 +14,5 @@ export interface ISessionRepo extends BaseRepository<ISession> {
     updateSessionDetails(sessionId : string, updatedData : Partial<ISession>) : Promise<void>
     removeParticipant(sessionId : string, userId : string) : Promise<boolean>;
     closeSession(sessionId : string, ownerId : string) : Promise<boolean>;
+    markExpiredSessionsEnded(now?: Date) : Promise<number>;
 }

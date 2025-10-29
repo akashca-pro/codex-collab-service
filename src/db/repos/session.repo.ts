@@ -127,4 +127,22 @@ export class SessionRepo extends BaseRepository<ISession> implements ISessionRep
             throw error;
         }
     }
+
+    async markExpiredSessionsEnded(now: Date = new Date()): Promise<number> {
+        const startTime = Date.now();
+        const operation = `markExpiredSessionsEnded:${this._model.modelName}`;
+        try {
+            logger.debug(`[REPO] Executing ${operation}`, { now });
+            const result = await this._model.updateMany(
+                { status: { $ne: STATUS.ENDED }, endsAt: { $lte: now } },
+                { $set: { status: STATUS.ENDED } }
+            );
+            const modified = result.modifiedCount ?? (result as any).nModified ?? 0;
+            logger.info(`[REPO] ${operation} successful`, { modified, duration: Date.now() - startTime });
+            return modified;
+        } catch (error) {
+            logger.error(`[REPO] ${operation} failed`, { error, duration: Date.now() - startTime });
+            throw error;
+        }
+    }
 }

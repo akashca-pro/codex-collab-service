@@ -12,6 +12,7 @@ import { connectDB } from "./config/db";
 import { config } from "./config";
 import { KafkaManager } from './config/kafka/kafkaManager';
 import { KafkaTopics } from './config/kafka/kafkaTopic';
+import { ISessionRepo } from './db/repos/interfaces/session.repo.interface';
 
 // const privateKey = fs.readFileSync('/app/localhost+1-key.pem', 'utf8');
 // const certificate = fs.readFileSync('/app/localhost+1.pem', 'utf8');
@@ -41,6 +42,7 @@ const io = new Server(server,{
 
 const socketManager = container.get<SocketManager>(TYPES.SocketManager);
 const kafkaManager = container.get<KafkaManager>(TYPES.KafkaManager);
+const sessionRepo = container.get<ISessionRepo>(TYPES.ISessionRepo);
 
 const startServer = async () => {
     try {
@@ -71,6 +73,19 @@ const startServer = async () => {
         server.listen(PORT, () => {
             logger.info(`HTTPS/Socket.IO server listening on port ${PORT}`);
         });
+
+        // Periodic job: mark expired sessions as ENDED
+        const INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+        setInterval(async () => {
+            try {
+                const modified = await sessionRepo.markExpiredSessionsEnded(new Date());
+                if (modified > 0) {
+                    logger.info(`Marked ${modified} sessions as ENDED due to expiry.`);
+                }
+            } catch (err) {
+                logger.error('Failed to mark expired sessions as ENDED', err);
+            }
+        }, INTERVAL_MS);
     } catch (error) {
         logger.error('Failed to start server : ',error);
         process.exit(1);

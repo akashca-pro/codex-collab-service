@@ -70,9 +70,8 @@ export class SocketManager {
     const { ownerId, sessionId } = socket.data;
     logger.info(`User with ownerId ${ownerId} authenticated for session ${sessionId} with socket ID: ${socket.id}`);
 
-    if (!(await this.#_io.in(sessionId).fetchSockets()).find(r => r.id === socket.id)) {
-        await this.#_sessionService.joinSession(socket, this.#_io);
-    }
+    // Always invoke joinSession on new connection/reconnection; it is idempotent and ensures initial-state
+    await this.#_sessionService.joinSession(socket, this.#_io);
     socket.on('doc-update', async (update : any) => {
       const docUpdate = update instanceof Uint8Array 
         ? update 

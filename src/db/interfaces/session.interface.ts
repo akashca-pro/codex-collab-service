@@ -8,7 +8,8 @@ export interface ISession extends Document {
   inviteToken : string;
   language : Language
   status: Status;
-  endedAt: Date | null; // Null until the session is terminated
+  endsAt: Date | null; // Null until the session is terminated
+  isClosed : boolean;
   createdAt : Date;
   updatedAt : Date;
 }

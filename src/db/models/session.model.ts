@@ -9,7 +9,8 @@ const SessionSchema = new Schema<ISession>({
     inviteToken : { type : String, default : null },
     language : { type : String, enum : Object.values(LANGUAGE), default : LANGUAGE.JAVASCRIPT },
     status : { type : String, enum : Object.values(STATUS), default : STATUS.ACTIVE },
-    endedAt : { type : Date, default : null }
+    endsAt : { type : Date, default : () => new Date(Date.now() + 24 * 60 * 60 * 1000) },
+    isClosed : { type : Boolean, default : false },
 },{ timestamps : true })
 
 SessionSchema.index({ createdAt: -1 }); 

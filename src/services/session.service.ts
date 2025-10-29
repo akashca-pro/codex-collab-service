@@ -76,9 +76,13 @@ async joinSession(
         const { userId, sessionId } = socket.data;
         if (!userId || !sessionId) {
              logger.warn('joinSession called with missing userId or sessionId on socket.data');
-             throw new Error('User or Session ID missing during join.');
+             socket.emit('error', { message: 'User or Session ID missing during join.' });
         }
         logger.info(`Attempting joinSession for user ${userId} in session ${sessionId}`);
+        const session = await this.#_sessionRepo.findSessionById(sessionId);
+        if(session?.status === 'ended'){
+          socket.emit('error', {message : 'Session is either ended or closed'})
+        }
         socket.join(sessionId);
         await this.#_redisService.addParticipantToSession(sessionId, userId);
         logger.debug(`Added participant ${userId} to Redis set for session ${sessionId}`);
@@ -99,7 +103,7 @@ async joinSession(
                 awareness = restored.awareness;
                 snapshotLoaded = restored.snapshotLoaded; // reflect actual snapshot application
             } else {
-                // As a fallback, try to get state (should not happen often)
+                // As a fallback, try to get state
                 const loaded = await this.getOrLoadSessionState(sessionId, io);
                 doc = loaded.doc;
                 awareness = loaded.awareness;
@@ -139,6 +143,23 @@ async joinSession(
         const initialState: ServerInitialState = { docUpdate, awarenessUpdate };
         socket.emit('initial-state', initialState);
         logger.info(`Emitted initial-state to user ${userId} for session ${sessionId}`);
+
+        // Mark session status ACTIVE if not ended/closed
+        try {
+          const session = await this.#_sessionRepo.findSessionById(sessionId);
+          const now = Date.now();
+          if (session) {
+            if (!session.isClosed && session.endsAt && now < new Date(session.endsAt).getTime()) {
+              if (session.status !== 'active') {
+                await this.#_sessionRepo.updateSessionDetails(sessionId, { status: 'active' as any });
+              }
+            } else if (session.endsAt && now >= new Date(session.endsAt).getTime()) {
+              if (session.status !== 'ended') {
+                await this.#_sessionRepo.updateSessionDetails(sessionId, { status: 'ended' as any });
+              }
+            }
+          }
+        } catch {}
 
       } catch (error: any) {
         logger.error(`Error during joinSession for user ${socket.data.userId || 'UNKNOWN'}.`, {
@@ -220,6 +241,22 @@ async joinSession(
 
         if (participantCount === 0) {
           logger.info(`Last participant left session ${sessionId}. Cleaning up resources.`);
+          // Update session status when room is empty
+          try {
+            const session = await this.#_sessionRepo.findSessionById(sessionId);
+            const now = Date.now();
+            if (session) {
+              if (session.isClosed || (session.endsAt && now >= new Date(session.endsAt).getTime())) {
+                if (session.status !== 'ended') {
+                  await this.#_sessionRepo.updateSessionDetails(sessionId, { status: 'ended' as any });
+                }
+              } else {
+                if (session.status !== 'offline') {
+                  await this.#_sessionRepo.updateSessionDetails(sessionId, { status: 'offline' as any });
+                }
+              }
+            }
+          } catch {}
           const doc = this.#_activeDocs.get(sessionId);
           const currentAwareness = this.#_activeAwareness.get(sessionId); // Get again in case it was created between checks
 
@@ -227,8 +264,14 @@ async joinSession(
             try {
                 const finalState = Y.encodeStateAsUpdate(doc);
                 const language = this.#_activeSessionMetadata.get(sessionId)?.language;
-                await this.#_snapshotRepo.saveSnapshot(sessionId, Buffer.from(finalState), language || LANGUAGE.JAVASCRIPT); // Provide default lang
-                logger.info(`Saved final snapshot for session ${sessionId}`);
+                // De-dupe: skip save if snapshot hasn't changed
+                const latest = await this.#_snapshotRepo.getLatestSnapshot(sessionId);
+                if (!latest || !Buffer.from(latest).equals(Buffer.from(finalState))) {
+                  await this.#_snapshotRepo.saveSnapshot(sessionId, Buffer.from(finalState), language || LANGUAGE.JAVASCRIPT);
+                  logger.info(`Saved final snapshot for session ${sessionId}`);
+                } else {
+                  logger.info(`Skipped snapshot save for session ${sessionId} (no changes).`);
+                }
             } catch (snapError: any) {
                  logger.error(`Failed to save snapshot for session ${sessionId} during cleanup.`, { errorMessage: snapError.message, errorStack: snapError.stack });
             } finally {
@@ -265,7 +308,7 @@ async joinSession(
       try {
       const session = await this.#_sessionRepo.findSessionById(sessionId);
       if (!session || session.ownerId !== userId) {
-        socket.emit('error', { message: 'Session not found or unauthenticated for close the session.' });
+        socket.emit('error', { message: 'Session not found or unauthenticated for closing the session.' });
         return;
       }
       const awareness = this.#_activeAwareness.get(sessionId);
@@ -273,7 +316,11 @@ async joinSession(
       if (doc) {
         const finalState = Y.encodeStateAsUpdate(doc);
         const language = this.#_activeSessionMetadata.get(sessionId)?.language
-        await this.#_snapshotRepo.saveSnapshot(sessionId, Buffer.from(finalState), language || 'javascript');
+        // De-dupe snapshot before save on explicit close
+        const latest = await this.#_snapshotRepo.getLatestSnapshot(sessionId);
+        if (!latest || !Buffer.from(latest).equals(Buffer.from(finalState))) {
+          await this.#_snapshotRepo.saveSnapshot(sessionId, Buffer.from(finalState), language || 'javascript');
+        }
         doc.destroy();
         awareness?.destroy(); 
         this.#_activeDocs.delete(sessionId);
@@ -281,7 +328,8 @@ async joinSession(
         this.#_activeSessionMetadata.delete(sessionId);
       }
         await this.#_sessionRepo.closeSession(sessionId, userId),
-      io.in(sessionId).disconnectSockets(true);
+        await this.#_sessionRepo.updateSessionDetails(sessionId, { status: 'ended', isClosed: true, endsAt: new Date() }),
+        io.in(sessionId).disconnectSockets(true);
       } catch (error) {
         logger.error(`Error during closeSession for user ${userId} in session ${sessionId}.`, { error });
         socket.emit('error', { message: 'Failed to close the session due to a server error.' });
@@ -429,12 +477,18 @@ async joinSession(
       if (doc && metadata) {
         try {
           const finalState = Y.encodeStateAsUpdate(doc);
-          await this.#_snapshotRepo.saveSnapshot(
-            sessionId,
-            Buffer.from(finalState),
-            metadata.language
-          );
-          logger.info(`Successfully saved snapshot for session ${sessionId}.`);
+          // De-dupe: skip save if unchanged
+          const latest = await this.#_snapshotRepo.getLatestSnapshot(sessionId);
+          if (!latest || !Buffer.from(latest).equals(Buffer.from(finalState))) {
+            await this.#_snapshotRepo.saveSnapshot(
+              sessionId,
+              Buffer.from(finalState),
+              metadata.language
+            );
+            logger.info(`Successfully saved snapshot for session ${sessionId}.`);
+          } else {
+            logger.info(`Skipped snapshot save during shutdown for session ${sessionId} (no changes).`);
+          }
         } catch (error) {
           logger.error(`Failed to save snapshot for session ${sessionId} during shutdown.`, { error });
         }
