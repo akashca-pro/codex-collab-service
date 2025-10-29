@@ -9,8 +9,6 @@ const SnapshotSchema = new Schema<ISnapshot>({
     snapshot : { type : Buffer, required : true }
 },{ timestamps : true })
 
-SnapshotSchema.index({ sessionId: 1, version: -1 }, { unique: true });
-
 SnapshotSchema.index({ createdAt: 1 }, { expireAfterSeconds: config.SNAPSHOT_TTL_SECONDS });
 
 export const SnapshotModel = mongoose.model<ISnapshot>('Snapshot', SnapshotSchema);

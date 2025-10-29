@@ -22,10 +22,8 @@ export class SnapshotRepo extends BaseRepository<ISnapshot> implements ISnapshot
         const sessionObjectId = new mongoose.Types.ObjectId(sessionId);
         try {
             logger.debug(`[REPO] Executing ${operation}`, { sessionId });
-            const latestVersion = await this.getLatestVersion(sessionObjectId);
             await this.create({
                 sessionId: sessionObjectId,
-                version: latestVersion + 1,
                 snapshot,
                 language
             });
@@ -47,8 +45,7 @@ export class SnapshotRepo extends BaseRepository<ISnapshot> implements ISnapshot
             const result = await this._model.findOne(
                 { sessionId: new mongoose.Types.ObjectId(sessionId) },
                 { snapshot: 1, _id: 0 } 
-            )
-            .sort({ version : -1 }).lean();
+            ).lean()
 
             const found = !!result;
             logger.info(`[REPO] ${operation} successful`, { found, sessionId, duration: Date.now() - startTime });
@@ -57,13 +54,5 @@ export class SnapshotRepo extends BaseRepository<ISnapshot> implements ISnapshot
             logger.error(`[REPO] ${operation} failed`, { error, sessionId, duration: Date.now() - startTime });
             throw error;
         }
-    }
-
-    private async getLatestVersion(sessionId: mongoose.Types.ObjectId): Promise<number> {
-        const result = await this._model.findOne({ sessionId })
-            .sort({ version: -1 })
-            .select('version')
-            .lean();
-        return result ? result.version : 0;
     }
 }
