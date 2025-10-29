@@ -56,6 +56,7 @@ export class SessionService implements ISessionService  {
           ownerId,
         })
         const inviteToken = this.generateInviteToken(session._id, ownerId);
+        await this.#_sessionRepo.update(session._id, { inviteToken })
         return {
           data : { inviteToken },
           success : true,
@@ -67,13 +68,13 @@ export class SessionService implements ISessionService  {
       }
     }
 
-    async joinSession(
+async joinSession(
       socket : Socket,
       io : Server
     ): Promise<void> {
     try {
         const { userId, sessionId } = socket.data;
-        if (!userId || !sessionId) { 
+        if (!userId || !sessionId) {
              logger.warn('joinSession called with missing userId or sessionId on socket.data');
              throw new Error('User or Session ID missing during join.');
         }
@@ -87,23 +88,67 @@ export class SessionService implements ISessionService  {
         });
         logger.debug(`Set user socket info for ${userId}`);
 
-        const { doc, awareness } = await this.getOrLoadSessionState(sessionId, io);
-        logger.debug(`Got doc and awareness for session ${sessionId}`);
+        // If no in-memory state exists (e.g., after last-leave or pod restart), restore from snapshot
+        let snapshotLoaded = false;
+        let doc = this.#_activeDocs.get(sessionId);
+        let awareness = this.#_activeAwareness.get(sessionId);
+        if (!doc || !awareness) {
+            const restored = await this.restoreSession(sessionId, io);
+            if (restored) {
+                doc = restored.doc;
+                awareness = restored.awareness;
+                snapshotLoaded = restored.snapshotLoaded; // reflect actual snapshot application
+            } else {
+                // As a fallback, try to get state (should not happen often)
+                const loaded = await this.getOrLoadSessionState(sessionId, io);
+                doc = loaded.doc;
+                awareness = loaded.awareness;
+                snapshotLoaded = loaded.snapshotLoaded;
+            }
+        }
+        logger.debug(`Got doc and awareness for session ${sessionId}. Snapshot loaded: ${snapshotLoaded}`);
 
+        // Clean up any lingering state for this user (handles rapid reconnects)
+        const existingClientIDs = Array.from(awareness.getStates().entries())
+                                      .filter(([, state]) => state.user?.id === userId)
+                                      .map(([clientID]) => clientID);
+
+        if (existingClientIDs.length > 0) {
+            logger.warn(`Found lingering awareness state for rejoining user ${userId} (ClientIDs: ${existingClientIDs.join(', ')}). Cleaning up before sending initial state.`);
+            removeAwarenessStates(awareness, existingClientIDs, 'server-join-cleanup');
+        }
+
+        // --- Initial State ---
         const docUpdate = Y.encodeStateAsUpdate(doc);
-        const awarenessUpdate = encodeAwarenessUpdate(awareness, Array.from(awareness.getStates().keys()));
+        logger.debug(`initial-state docUpdate bytes for session ${sessionId}: ${docUpdate.byteLength}; snapshotLoaded=${snapshotLoaded}`);
+        let awarenessUpdate: YjsUpdate;
+
+        if (snapshotLoaded) {
+            // If restored from snapshot, send an empty awareness state initially.
+            // The client will establish its own state upon connection.
+            logger.debug(`Session ${sessionId} restored from snapshot. Sending empty initial awareness.`);
+            awarenessUpdate = encodeAwarenessUpdate(awareness, []); // Encode for NO clients
+        } else {
+            // If session was active, send the current full awareness state.
+            // Ensure we get the *current* keys after potential cleanup.
+            const currentAwarenessKeys = Array.from(awareness.getStates().keys());
+            logger.debug(`Session ${sessionId} was active. Sending awareness for clients: ${currentAwarenessKeys.join(', ')}`);
+            awarenessUpdate = encodeAwarenessUpdate(awareness, currentAwarenessKeys);
+        }
+
         const initialState: ServerInitialState = { docUpdate, awarenessUpdate };
         socket.emit('initial-state', initialState);
         logger.info(`Emitted initial-state to user ${userId} for session ${sessionId}`);
-      } catch (error: any) { 
+
+      } catch (error: any) {
         logger.error(`Error during joinSession for user ${socket.data.userId || 'UNKNOWN'}.`, {
             sessionId: socket.data.sessionId,
             errorMessage: error.message,
             errorStack: error.stack,
-            errorObject: error
+            errorObjectString: String(error)
          });
         socket.emit('error', { message: 'Failed to initialize the session on the server.' });
-        socket.disconnect(true);
+        socket.disconnect(true); // Disconnect client on error
       }
     }
 
@@ -115,7 +160,7 @@ export class SessionService implements ISessionService  {
         const awareness = this.#_activeAwareness.get(sessionId);
         if (awareness) {
             applyAwarenessUpdate(awareness, update, socket.id);
-          socket.broadcast.to(sessionId).emit('awareness-update', update);
+          socket.to(sessionId).emit('awareness-update', update);
         }else{
           logger.warn(`No awareness found for session ${sessionId} during handleAwarenessUpdate`);
           return;
@@ -130,7 +175,7 @@ export class SessionService implements ISessionService  {
         const { sessionId } = socket.data;
         const { doc } = await this.getOrLoadSessionState(sessionId, io);
         Y.applyUpdate(doc, update, socket.id);
-        socket.broadcast.to(sessionId).emit('doc-update', update);
+        socket.to(sessionId).emit('doc-update', update);
     }
 
     async leaveSession(
@@ -139,13 +184,11 @@ export class SessionService implements ISessionService  {
       const { userId, sessionId } = socket.data;
       if (!userId || !sessionId) {
           logger.warn('leaveSession called without userId or sessionId on socket data.');
-          return; // Nothing to do if we don't know who/where
+          return;
       }
       logger.info(`Attempting leaveSession for user ${userId} from session ${sessionId}`);
       try {
         socket.leave(sessionId);
-
-        // Promise.all to run DB and Redis removal concurrently
         await Promise.all([
              this.#_sessionRepo.removeParticipant(sessionId, userId),
              this.#_redisService.removeParticipantFromSession(sessionId, userId)
@@ -156,13 +199,13 @@ export class SessionService implements ISessionService  {
         if (awareness) {
           const states = Array.from(awareness.getStates().entries());
           const disconnectedEntry = states.find(([, state]) => state.user?.id === userId);
-
+          console.log('disconnected entry',disconnectedEntry)
           if (disconnectedEntry) {
             const clientID = disconnectedEntry[0];
             logger.debug(`Removing awareness state for clientID ${clientID} (user ${userId})`);
             removeAwarenessStates(awareness, [clientID], socket);
             const removalUpdate = encodeAwarenessUpdate(awareness, [clientID]);
-            socket.broadcast.to(sessionId).emit('awareness-update', removalUpdate);
+            socket.to(sessionId).emit('awareness-update', removalUpdate);
              logger.debug(`Published awareness removal for user ${userId} to Redis`);
           } else {
              logger.warn(`Could not find awareness state for disconnecting user ${userId} in session ${sessionId}`);
@@ -237,10 +280,7 @@ export class SessionService implements ISessionService  {
         this.#_activeAwareness.delete(sessionId);
         this.#_activeSessionMetadata.delete(sessionId);
       }
-      await Promise.all([
         await this.#_sessionRepo.closeSession(sessionId, userId),
-        await this.#_redisService.publishSessionClosed(sessionId)
-      ])
       io.in(sessionId).disconnectSockets(true);
       } catch (error) {
         logger.error(`Error during closeSession for user ${userId} in session ${sessionId}.`, { error });
@@ -269,7 +309,8 @@ export class SessionService implements ISessionService  {
           metadata.language = language;
         }
         await this.#_sessionRepo.updateSessionDetails(sessionId, {language})
-        await this.#_redisService.publishMetadataUpdate(sessionId, metadata);
+        // Emit locally; with session affinity, all clients of this session are on this pod
+        io.to(sessionId).emit('metadata-changed', metadata);
       } catch (error) {
         logger.error(`Error during changeLanguage for user ${userId} in session ${sessionId}.`, { error });
         socket.emit('error', { message: 'Failed to change the language due to a server error.' });
@@ -279,13 +320,17 @@ export class SessionService implements ISessionService  {
   private async getOrLoadSessionState(
     sessionId: string, 
     io : Server
-  ) : Promise<{doc: Y.Doc, awareness: Awareness}> {
+  ) : Promise<{doc: Y.Doc, awareness: Awareness, snapshotLoaded: boolean}> {
     if (this.#_activeDocs.has(sessionId)) {
         return {
             doc: this.#_activeDocs.get(sessionId)!,
-            awareness: this.#_activeAwareness.get(sessionId)!
+            awareness: this.#_activeAwareness.get(sessionId)!,
+            snapshotLoaded : false
         };
     }
+
+    let snapshotLoaded = false; 
+
     if (!this.#_activeSessionMetadata.has(sessionId)) {
       const session = await this.#_sessionRepo.findSessionById(sessionId);
       if (session) {
@@ -295,28 +340,57 @@ export class SessionService implements ISessionService  {
         });
       }
     }
+    
     const doc = new Y.Doc();
     this.#_activeDocs.set(sessionId, doc);
 
     const awareness = new Awareness(doc);
     this.#_activeAwareness.set(sessionId, awareness);
 
-    await this.#_redisService.subscribeToMetadataUpdates(sessionId, (incomingMetadata: ActiveSessionMetadata) => {
-      this.#_activeSessionMetadata.set(sessionId, incomingMetadata);
-      io.to(sessionId).emit('metadata-changed', incomingMetadata);
-    });
-    await this.#_redisService.subscribeToSessionClosed(sessionId, (payload : {sessionId : string})=>{
-      this.cleanupSessionMemory(sessionId);
-      io.to(sessionId).emit('close-session');
-      io.in(sessionId).disconnectSockets(true);
-    })
-
     // This is for restore the session if all users disconnect by network issue.
     const snapshot = await this.#_snapshotRepo.getLatestSnapshot(sessionId);
-    if (snapshot) {
-        Y.applyUpdate(doc, new Uint8Array(snapshot), 'redis');
+      if (snapshot) {
+          const snapUint8 = snapshot instanceof Uint8Array 
+            ? snapshot 
+            : new Uint8Array((snapshot as Buffer).buffer, (snapshot as Buffer).byteOffset, (snapshot as Buffer).byteLength);
+          logger.debug(`Applying snapshot to new doc for session ${sessionId}. Snapshot bytes: ${(snapUint8 as Uint8Array).byteLength}`);
+          Y.applyUpdate(doc, snapUint8 as Uint8Array, 'snapshot-load');
+          snapshotLoaded = true; 
+      } else {
+          logger.debug(`No snapshot found for session ${sessionId}. Starting with empty doc.`);
+      }
+    return { doc, awareness, snapshotLoaded };
+  }
+  
+  private async cleanupSessionMemory(sessionId: string): Promise<void> {
+    const doc = this.#_activeDocs.get(sessionId);
+    const awareness = this.#_activeAwareness.get(sessionId);
+
+    try {
+      if (doc) doc.destroy();
+      if (awareness) awareness.destroy();
+      this.#_activeDocs.delete(sessionId);
+      this.#_activeAwareness.delete(sessionId);
+      this.#_activeSessionMetadata.delete(sessionId);
+      logger.info(`Cleaned up local session state for ${sessionId}`);
+    } catch (err) {
+      logger.error(`Error cleaning up local state for session ${sessionId}`, err);
     }
-    return { doc, awareness };
+  }
+
+  private async restoreSession(sessionId: string, io: Server) : Promise<{ doc: Y.Doc; awareness: Awareness; snapshotLoaded: boolean } | null> {
+    try {
+      // Ensure any stale in-memory state is removed first
+      await this.cleanupSessionMemory(sessionId);
+
+      // Recreate state from snapshot
+      const { doc, awareness, snapshotLoaded } = await this.getOrLoadSessionState(sessionId, io);
+      logger.info(`Restored session ${sessionId} from ${snapshotLoaded ? 'snapshot' : 'empty state'} and rebuilt local state.`);
+      return { doc, awareness, snapshotLoaded };
+    } catch (error: any) {
+      logger.error(`Failed to restore session ${sessionId} from snapshot.`, { errorMessage: error.message, errorStack: error.stack });
+      return null;
+    }
   }
 
   private async logOperation(opLog: CollaborationOpLog, sessionId : string): Promise<void> {
@@ -338,21 +412,6 @@ export class SessionService implements ISessionService  {
     });
   }
 
-  private async cleanupSessionMemory(sessionId: string): Promise<void> {
-    const doc = this.#_activeDocs.get(sessionId);
-    const awareness = this.#_activeAwareness.get(sessionId);
-
-    try {
-      if (doc) doc.destroy();
-      if (awareness) awareness.destroy();
-      this.#_activeDocs.delete(sessionId);
-      this.#_activeAwareness.delete(sessionId);
-      this.#_activeSessionMetadata.delete(sessionId);
-      logger.info(`Cleaned up local session state for ${sessionId}`);
-    } catch (err) {
-      logger.error(`Error cleaning up local state for session ${sessionId}`, err);
-    }
-  }
 
   public async shutdownAndSaveAllSessions(): Promise<void> {
     logger.info(`Graceful shutdown initiated. Saving all active sessions...`);
@@ -384,5 +443,5 @@ export class SessionService implements ISessionService  {
 
     await Promise.all(savePromises);
     logger.info(`Finished saving ${activeSessionIds.length} active sessions.`);
-    }
+  }
 }

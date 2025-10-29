@@ -45,54 +45,6 @@ export class RedisService {
     return this.#_publisher.scard(key);
   }
 
-  public async publishMetadataUpdate(
-    sessionId: string,
-    metadata: ActiveSessionMetadata
-  ): Promise<void> {
-    const channel = `session:metadata-updates:${sessionId}`;
-    await this.publishWithRetry(channel, JSON.stringify(metadata));
-  }
-
-  public async subscribeToMetadataUpdates(
-    sessionId: string,
-    callback: (metadata: ActiveSessionMetadata) => void
-  ): Promise<void> {
-    const channel = `session:metadata-updates:${sessionId}`;
-    this.#_subscriber.subscribe(channel);
-    this.#_subscriber.on('message', (_channel, message) => {
-      if (_channel === channel && message) {
-        const metadata = JSON.parse(message) as ActiveSessionMetadata;
-        callback(metadata);
-      }
-    });
-  }
-
-  public async publishSessionClosed(sessionId: string): Promise<void> {
-    const channel = `session:close-event:${sessionId}`;
-    const payload = JSON.stringify({
-      sessionId
-    });
-    await this.publishWithRetry(channel, payload);
-  }
-
-  public async subscribeToSessionClosed(
-    sessionId : string,
-    callback: (payload: {sessionId: string }) => void
-  ): Promise<void> {
-    const channel = `session:close-event:${sessionId}`;
-    this.#_subscriber.subscribe(channel);
-    this.#_subscriber.on('message', (_channel, message) => {
-      if (_channel === channel && message) {
-        try {
-          const event = JSON.parse(message);
-          callback(event);
-        } catch (err) {
-          console.error('Failed to parse session event', err);
-        }
-      }
-    });
-  }
-
   private async publishWithRetry(channel: string, message: string | Buffer, retries = 3): Promise<void> {
       for (let i = 0; i < retries; i++) {
         try {
@@ -107,5 +59,5 @@ export class RedisService {
           await this.#_delay(50 * Math.pow(2, i));
         }
       }
-    }
+  }
 }

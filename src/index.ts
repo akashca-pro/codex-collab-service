@@ -30,18 +30,13 @@ app.use(cookieParser());
 const server = https.createServer(credentials, app);
 const io = new Server(server,{
     cors : corsOptions,
-    // Binary data handling
     maxHttpBufferSize: 1e8, // 100 MB max buffer
-    // Connection settings
     pingTimeout: 60000,
     pingInterval: 25000,
-    // Use websocket with proper upgrade
     transports: ['websocket'],
-    // Allow upgrades
     allowUpgrades: true,
-    // Ensure proper protocol handling
-    perMessageDeflate: false, // IMPORTANT: Disable compression for binary data
-    httpCompression: false,   // IMPORTANT: Disable HTTP compression
+    perMessageDeflate: false,
+    httpCompression: false, 
 });
 
 const socketManager = container.get<SocketManager>(TYPES.SocketManager);

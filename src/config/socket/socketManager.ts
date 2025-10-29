@@ -47,12 +47,8 @@ export class SocketManager {
     const cookies = parseCookies(cookieHeader);
     const accessToken = cookies['accessToken'];
     if (!inviteToken || !accessToken) {
-            let missing = [];
-            if (!inviteToken) missing.push("invite token");
-            if (!accessToken) missing.push("access token (cookie or auth)");
-            logger.warn('Socket Auth Middleware: Missing required tokens.', { missing: missing.join(', ') });
-            return next(new Error(`Authentication error: Missing ${missing.join(' and ')}.`));
-        }
+      return next(new Error("401"));
+    }
     try {
       const decodedInviteId = jwt.verify(inviteToken, config.JWT_INVITE_TOKEN_SECRET) as InviteTokenPayload;
       const decodedAccessToken = jwt.verify(accessToken, config.JWT_ACCESS_TOKEN_SECRET) as AccessTokenPayload;

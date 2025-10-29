@@ -5,6 +5,7 @@ import { Document } from "mongoose";
 export interface ISession extends Document {
   ownerId: string; // The user ID of the session creator
   participants: string[]; // Array of user IDs currently in the session
+  inviteToken : string;
   language : Language
   status: Status;
   endedAt: Date | null; // Null until the session is terminated
