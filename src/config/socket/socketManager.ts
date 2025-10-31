@@ -8,7 +8,6 @@ import jwt from 'jsonwebtoken';
 import { ISessionService } from '@/services/interfaces/session.service.interface';
 import TYPES from '@/config/inversify/types';
 import { AccessTokenPayload, InviteTokenPayload } from '@/types/tokenPayload.types';
-import { ControlMessage, ControlMsgType } from '@/const/events.const';
 import { parseCookies } from '@/utils/cookieParser';
 import { ActiveSessionMetadata } from '@/types/document.types';
 
@@ -76,8 +75,6 @@ export class SocketManager {
       const docUpdate = update instanceof Uint8Array 
         ? update 
         : new Uint8Array(Buffer.isBuffer(update) ? update : Buffer.from(update));
-        console.log(update);
-        console.log(docUpdate)
       await this.#_sessionService.updateDocument(socket, docUpdate, this.#_io);
     })
 

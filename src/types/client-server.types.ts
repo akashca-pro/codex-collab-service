@@ -11,7 +11,6 @@ export interface ClientChatMessage {
   text: string;
 }
 
-
 // --- Server-to-Client Event Payloads ---
 
 /**
@@ -41,4 +40,11 @@ export interface ServerBroadcastChatMessage {
 export interface ServerError {
   message: string;
   code?: number;
+}
+
+export interface CollabUserInfo {
+  id : string;
+  username : string;
+  firstName : string;
+  avatar : string;
 }

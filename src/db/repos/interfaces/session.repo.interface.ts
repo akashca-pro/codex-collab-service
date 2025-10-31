@@ -9,7 +9,7 @@ import { BaseRepository } from "../base.repo";
  */
 export interface ISessionRepo extends BaseRepository<ISession> {
     findSessionById(sessionId : string) : Promise<ISession | null>
-    findActiveSessionByOwnerId(ownerId : string) : Promise<ISession | null>
+    findActiveOrOfflineSessionByOwnerId(ownerId : string) : Promise<ISession | null>
     findSessionByParticipant(userId : string) : Promise<ISession | null>
     updateSessionDetails(sessionId : string, updatedData : Partial<ISession>) : Promise<void>
     removeParticipant(sessionId : string, userId : string) : Promise<boolean>;

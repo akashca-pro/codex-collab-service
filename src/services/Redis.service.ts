@@ -1,9 +1,8 @@
 import { UserSocketInfo } from '../types/redis.types'; // Assuming types are in a 'types.ts' file
-import { YjsUpdate } from '@/types/client-server.types'
 import redis from '@/config/redis/index';
-import { ActiveSessionMetadata } from '@/types/document.types';
 import { injectable } from 'inversify';
 import Redis from 'ioredis';
+import logger from '@/utils/pinoLogger';
 
 @injectable()
 export class RedisService {
@@ -18,7 +17,7 @@ export class RedisService {
 
   public async connect(): Promise<void> {
     await Promise.all([this.#_publisher.connect(), this.#_subscriber.connect()]);
-    console.log('Connected to Redis clients.');
+    logger.info('Connected to Redis clients.');
   }
 
   public async setUserSocketInfo(userId: string, info: UserSocketInfo): Promise<void> {

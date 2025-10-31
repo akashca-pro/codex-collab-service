@@ -44,12 +44,11 @@ export class SessionService implements ISessionService  {
 
     async createSession(ownerId: string): Promise<ResponseDTO> {
     try {
-        const isActiveSessionExist = await this.#_sessionRepo.findActiveSessionByOwnerId(ownerId);
+        const isActiveSessionExist = await this.#_sessionRepo.findActiveOrOfflineSessionByOwnerId(ownerId);
         if(isActiveSessionExist){
             return {
-                data : null,
-                success : false,
-                errorMessage : SESSION_ERROR_MESSAGES.SESSION_ALREADY_EXIST
+                data : { inviteToken : isActiveSessionExist.inviteToken },
+                success : true,
             }
         }
         const session = await this.#_sessionRepo.create({
@@ -62,7 +61,6 @@ export class SessionService implements ISessionService  {
           success : true,
         }
       } catch (error) {
-        console.log(error);
         logger.error('Failed to create session.', { error });
         return { data: null, success: false, errorMessage: 'A server error occurred while creating the session.' };
       }
@@ -82,6 +80,8 @@ async joinSession(
         const session = await this.#_sessionRepo.findSessionById(sessionId);
         if(session?.status === 'ended'){
           socket.emit('error', {message : 'Session is either ended or closed'})
+          socket.disconnect(true); 
+          return;
         }
         socket.join(sessionId);
         await this.#_redisService.addParticipantToSession(sessionId, userId);
@@ -220,7 +220,7 @@ async joinSession(
         if (awareness) {
           const states = Array.from(awareness.getStates().entries());
           const disconnectedEntry = states.find(([, state]) => state.user?.id === userId);
-          console.log('disconnected entry',disconnectedEntry)
+          logger.debug('disconnected entry',disconnectedEntry)
           if (disconnectedEntry) {
             const clientID = disconnectedEntry[0];
             logger.debug(`Removing awareness state for clientID ${clientID} (user ${userId})`);
@@ -456,7 +456,7 @@ async joinSession(
     };
     
     return jwt.sign(payload, config.JWT_INVITE_TOKEN_SECRET, {
-      expiresIn: '1h',
+      expiresIn: config.JWT_INVITE_TOKEN_EXPIRY as '24h',
     });
   }
 

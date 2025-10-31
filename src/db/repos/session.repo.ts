@@ -29,14 +29,20 @@ export class SessionRepo extends BaseRepository<ISession> implements ISessionRep
         }
     }
 
-    async findActiveSessionByOwnerId(
+    async findActiveOrOfflineSessionByOwnerId(
         ownerId: string
     ): Promise<ISession | null> {
         const startTime = Date.now();
         const operation = `findSessionByOwnerId:${this._model.modelName}`;
         try {
             logger.debug(`[REPO] Executing ${operation}`, { ownerId });
-            const result = await this._model.findOne({ ownerId , status : STATUS.ACTIVE });
+            const result = await this._model.findOne({
+                ownerId,
+                $or: [
+                    { status: STATUS.ACTIVE },
+                    { status: STATUS.OFFLINE }
+                ]
+            });
             const found = !!result;
             logger.info(`[REPO] ${operation} successful`, { found, ownerId, duration: Date.now() - startTime });
             return result;
