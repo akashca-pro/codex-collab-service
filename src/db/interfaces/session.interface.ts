@@ -7,6 +7,8 @@ export interface ISession extends Document {
   participants: string[]; // Array of user IDs currently in the session
   inviteToken : string;
   language : Language
+  fontSize : number;
+  intelliSense : boolean;
   status: Status;
   endsAt: Date | null; // Null until the session is terminated
   isClosed : boolean;

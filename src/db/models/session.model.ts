@@ -8,6 +8,8 @@ const SessionSchema = new Schema<ISession>({
     participants : { type : [String], default : [] },
     inviteToken : { type : String, default : null },
     language : { type : String, enum : Object.values(LANGUAGE), default : LANGUAGE.JAVASCRIPT },
+    fontSize : { type : Number, default : 16 },
+    intelliSense : { type : Boolean, default : false },
     status : { type : String, enum : Object.values(STATUS), default : STATUS.ACTIVE },
     endsAt : { type : Date, default : () => new Date(Date.now() + 24 * 60 * 60 * 1000) },
     isClosed : { type : Boolean, default : false },

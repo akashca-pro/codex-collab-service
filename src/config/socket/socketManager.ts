@@ -9,7 +9,7 @@ import { ISessionService } from '@/services/interfaces/session.service.interface
 import TYPES from '@/config/inversify/types';
 import { AccessTokenPayload, InviteTokenPayload } from '@/types/tokenPayload.types';
 import { parseCookies } from '@/utils/cookieParser';
-import { ActiveSessionMetadata } from '@/types/document.types';
+import { MetadataMessage, MetadataMsgType, RunCodeMessage } from '@/const/events.const';
 
 
 @injectable()
@@ -58,6 +58,7 @@ export class SocketManager {
       socket.data.ownerId = decodedInviteId.ownerId;
       socket.data.userId = decodedAccessToken.userId;
       socket.data.email = decodedAccessToken.email;
+      socket.data.username = decodedAccessToken.username;
       next();
     } catch (error) {
       logger.error('JWT invite token verification failed', error);
@@ -85,12 +86,18 @@ export class SocketManager {
       await this.#_sessionService.handleAwarenessUpdate(socket, awarenessUpdate);
     })
 
-    socket.on('metadata-changed', async (update : ActiveSessionMetadata) => {
-      await this.#_sessionService.changeLanguage(socket, this.#_io, update.language)
+    socket.on('change-metadata', async ( message : MetadataMessage) => {
+      logger.debug(`[SocketManager] Received change-metadata event from user ${socket.data.userId}: ${message.type}`);
+      await this.#_sessionService.changeMetadata(socket, this.#_io, message.payload)
+    })
+
+    socket.on('code-execution', async (message : RunCodeMessage) => {
+      logger.debug(`[SocketManager] Received code-execution event from user ${socket.data.userId}: ${message.type}`);
+      await this.#_sessionService.codeExecution(socket, this.#_io, message);
     })
 
     socket.on('leave-session', async () => {
-      await this.#_sessionService.leaveSession(socket);
+      await this.#_sessionService.leaveSession(socket, this.#_io);
     })
 
     socket.on('close-session', async () => {
@@ -99,7 +106,7 @@ export class SocketManager {
 
     socket.on('disconnect', async () => {
       logger.info(`User disconnected: ${ownerId}`);
-      await this.#_sessionService.leaveSession(socket);
+      await this.#_sessionService.leaveSession(socket, this.#_io);
     });
   }
 }

@@ -7,9 +7,8 @@ import TYPES from '@/config/inversify/types';
 import { ISessionRepo } from '@/db/repos/interfaces/session.repo.interface';
 import { ISessionService } from './interfaces/session.service.interface';
 import { ResponseDTO } from '@/dtos/ResponseDTO';
-import { SESSION_ERROR_MESSAGES } from '@/const/errorType.const';
 import { RedisService } from './Redis.service';
-import { ActiveDocsMap, ActiveSessionMetadata } from '@/types/document.types';
+import { ActiveDocsMap, ActiveSessionMetadata, ActiveSessionRunCodeData } from '@/types/document.types';
 import { ISnapshotRepo } from '@/db/repos/interfaces/snapshot.repo.interface';
 import { ServerInitialState, YjsUpdate } from '@/types/client-server.types';
 import { CollaborationOpLog } from '@/types/kafka.types';
@@ -17,8 +16,9 @@ import { KafkaTopics } from '@/config/kafka/kafkaTopic';
 import { KafkaManager } from '@/config/kafka/kafkaManager';
 import jwt from 'jsonwebtoken';
 import { InviteTokenPayload } from '@/types/tokenPayload.types';
-import { LANGUAGE, Language } from '@/const/language.const';
+import { LANGUAGE } from '@/const/language.const';
 import logger from '@/utils/pinoLogger';
+import { RunCodeMessage } from '@/const/events.const';
 
 @injectable()
 export class SessionService implements ISessionService  {
@@ -66,13 +66,13 @@ export class SessionService implements ISessionService  {
       }
     }
 
-async joinSession(
+    async joinSession(
       socket : Socket,
       io : Server
     ): Promise<void> {
     try {
-        const { userId, sessionId } = socket.data;
-        if (!userId || !sessionId) {
+        const { userId, sessionId, username } = socket.data;
+        if (!userId || !sessionId || !username) {
              logger.warn('joinSession called with missing userId or sessionId on socket.data');
              socket.emit('error', { message: 'User or Session ID missing during join.' });
         }
@@ -84,6 +84,7 @@ async joinSession(
           return;
         }
         socket.join(sessionId);
+        io.to(sessionId).emit('user-joined', { username });
         await this.#_redisService.addParticipantToSession(sessionId, userId);
         logger.debug(`Added participant ${userId} to Redis set for session ${sessionId}`);
         await this.#_redisService.setUserSocketInfo(userId, {
@@ -96,18 +97,21 @@ async joinSession(
         let snapshotLoaded = false;
         let doc = this.#_activeDocs.get(sessionId);
         let awareness = this.#_activeAwareness.get(sessionId);
+        let metadata = this.#_activeSessionMetadata.get(sessionId)
         if (!doc || !awareness) {
             const restored = await this.restoreSession(sessionId, io);
             if (restored) {
                 doc = restored.doc;
                 awareness = restored.awareness;
                 snapshotLoaded = restored.snapshotLoaded; // reflect actual snapshot application
+                metadata = this.#_activeSessionMetadata.get(sessionId) || metadata;
             } else {
                 // As a fallback, try to get state
                 const loaded = await this.getOrLoadSessionState(sessionId, io);
                 doc = loaded.doc;
                 awareness = loaded.awareness;
                 snapshotLoaded = loaded.snapshotLoaded;
+                metadata = loaded.metadata;
             }
         }
         logger.debug(`Got doc and awareness for session ${sessionId}. Snapshot loaded: ${snapshotLoaded}`);
@@ -143,6 +147,12 @@ async joinSession(
         const initialState: ServerInitialState = { docUpdate, awarenessUpdate };
         socket.emit('initial-state', initialState);
         logger.info(`Emitted initial-state to user ${userId} for session ${sessionId}`);
+
+        // Emit current metadata to the client so UI can sync settings
+        const currentMetadata = this.#_activeSessionMetadata.get(sessionId);
+        if (currentMetadata) {
+          socket.emit('metadata-changed', currentMetadata);
+        }
 
         // Mark session status ACTIVE if not ended/closed
         try {
@@ -201,8 +211,9 @@ async joinSession(
 
     async leaveSession(
       socket: Socket,
+      io : Server
     ): Promise<void> {
-      const { userId, sessionId } = socket.data;
+      const { userId, sessionId, username } = socket.data;
       if (!userId || !sessionId) {
           logger.warn('leaveSession called without userId or sessionId on socket data.');
           return;
@@ -210,6 +221,7 @@ async joinSession(
       logger.info(`Attempting leaveSession for user ${userId} from session ${sessionId}`);
       try {
         socket.leave(sessionId);
+        io.to(sessionId).emit('user-left', { username });
         await Promise.all([
              this.#_sessionRepo.removeParticipant(sessionId, userId),
              this.#_redisService.removeParticipantFromSession(sessionId, userId)
@@ -263,11 +275,17 @@ async joinSession(
           if (doc) {
             try {
                 const finalState = Y.encodeStateAsUpdate(doc);
-                const language = this.#_activeSessionMetadata.get(sessionId)?.language;
+                const meta = this.#_activeSessionMetadata.get(sessionId);
                 // De-dupe: skip save if snapshot hasn't changed
                 const latest = await this.#_snapshotRepo.getLatestSnapshot(sessionId);
                 if (!latest || !Buffer.from(latest).equals(Buffer.from(finalState))) {
-                  await this.#_snapshotRepo.saveSnapshot(sessionId, Buffer.from(finalState), language || LANGUAGE.JAVASCRIPT);
+                  await this.#_snapshotRepo.saveSnapshot(
+                    sessionId,
+                    Buffer.from(finalState),
+                    (meta?.language) || LANGUAGE.JAVASCRIPT,
+                    (meta?.fontSize) ?? 16,
+                    (meta?.intelliSense) ?? false
+                  );
                   logger.info(`Saved final snapshot for session ${sessionId}`);
                 } else {
                   logger.info(`Skipped snapshot save for session ${sessionId} (no changes).`);
@@ -315,11 +333,17 @@ async joinSession(
       const doc = this.#_activeDocs.get(sessionId);
       if (doc) {
         const finalState = Y.encodeStateAsUpdate(doc);
-        const language = this.#_activeSessionMetadata.get(sessionId)?.language
+        const meta = this.#_activeSessionMetadata.get(sessionId)
         // De-dupe snapshot before save on explicit close
         const latest = await this.#_snapshotRepo.getLatestSnapshot(sessionId);
         if (!latest || !Buffer.from(latest).equals(Buffer.from(finalState))) {
-          await this.#_snapshotRepo.saveSnapshot(sessionId, Buffer.from(finalState), language || 'javascript');
+          await this.#_snapshotRepo.saveSnapshot(
+            sessionId,
+            Buffer.from(finalState),
+            (meta?.language) || LANGUAGE.JAVASCRIPT,
+            (meta?.fontSize) ?? 16,
+            (meta?.intelliSense) ?? false
+          );
         }
         doc.destroy();
         awareness?.destroy(); 
@@ -334,60 +358,84 @@ async joinSession(
         logger.error(`Error during closeSession for user ${userId} in session ${sessionId}.`, { error });
         socket.emit('error', { message: 'Failed to close the session due to a server error.' });
       }
-    }
+    } 
 
-    async changeLanguage(
+    async changeMetadata(
       socket: Socket,
       io: Server,
-      language: Language
+      message: Partial<ActiveSessionMetadata>
     ): Promise<void> {
-        const { userId, sessionId } = socket.data;
+      const { userId, sessionId } = socket.data;
       try {
-        const session = await this.#_sessionRepo.findSessionById(sessionId);
-        if (!session || session.ownerId !== userId) {
-          socket.emit('error', { message: 'Only the session owner can change the language.' });
-          return;
-        }
         const metadata = this.#_activeSessionMetadata.get(sessionId);
         if (!metadata) {
           socket.emit('error', { message: 'Session not found or inactive.' });
           return;
         }
-        if (metadata) {
-          metadata.language = language;
+
+        const updates: Partial<ActiveSessionMetadata> = {};
+
+        if (typeof message.fontSize === 'number') {
+          if (message.fontSize >= 9 && message.fontSize <= 64) {
+            metadata.fontSize = message.fontSize;
+            updates.fontSize = message.fontSize;
+          } else {
+            socket.emit('error', { message: 'Invalid font size.' });
+            return;
+          }
         }
-        await this.#_sessionRepo.updateSessionDetails(sessionId, {language})
-        // Emit locally; with session affinity, all clients of this session are on this pod
+
+        if (typeof message.intelliSense === 'boolean') {
+          metadata.intelliSense = message.intelliSense;
+          updates.intelliSense = message.intelliSense;
+        }
+
+        if (typeof message.language === 'string') {
+          metadata.language = message.language;
+          updates.language = message.language;
+        }
+
+        if (Object.keys(updates).length === 0) {
+          return;
+        }
+
+        await this.#_sessionRepo.updateSessionDetails(sessionId, updates);
         io.to(sessionId).emit('metadata-changed', metadata);
+
       } catch (error) {
-        logger.error(`Error during changeLanguage for user ${userId} in session ${sessionId}.`, { error });
-        socket.emit('error', { message: 'Failed to change the language due to a server error.' });
+        logger.error(`Error during changeMetadata for user ${userId} in session ${sessionId}.`, { error });
+        socket.emit('error', { message: 'Failed to change the metadata due to a server error.' });
       }
-    }    
+    }
+
+    async codeExecution(
+      socket: Socket, 
+      io: Server, 
+      message: RunCodeMessage
+    ): Promise<void> {
+      const { sessionId } = socket.data;
+      if(message.type === 'running-code'){
+        io.to(sessionId).emit('code-executing',message);
+      }
+      if(message.type === 'result-updated'){
+        io.to(sessionId).emit('code-executed',message);
+      }
+    }
 
   private async getOrLoadSessionState(
     sessionId: string, 
     io : Server
-  ) : Promise<{doc: Y.Doc, awareness: Awareness, snapshotLoaded: boolean}> {
-    if (this.#_activeDocs.has(sessionId)) {
+  ) : Promise<{doc: Y.Doc, awareness: Awareness, snapshotLoaded: boolean, metadata : ActiveSessionMetadata }> {
+    if (this.#_activeDocs.has(sessionId) ) {
         return {
             doc: this.#_activeDocs.get(sessionId)!,
             awareness: this.#_activeAwareness.get(sessionId)!,
+            metadata : this.#_activeSessionMetadata.get(sessionId)!,
             snapshotLoaded : false
         };
     }
 
     let snapshotLoaded = false; 
-
-    if (!this.#_activeSessionMetadata.has(sessionId)) {
-      const session = await this.#_sessionRepo.findSessionById(sessionId);
-      if (session) {
-        this.#_activeSessionMetadata.set(sessionId, {
-          language: session.language,
-          ownerId: session.ownerId
-        });
-      }
-    }
     
     const doc = new Y.Doc();
     this.#_activeDocs.set(sessionId, doc);
@@ -407,13 +455,31 @@ async joinSession(
       } else {
           logger.debug(`No snapshot found for session ${sessionId}. Starting with empty doc.`);
       }
-    return { doc, awareness, snapshotLoaded };
+
+    let metadata = await this.#_snapshotRepo.getLatestMetadata(sessionId);
+    if (!metadata) {
+      const session = await this.#_sessionRepo.findSessionById(sessionId);
+      if (session) {
+        metadata = {
+          language: session.language,
+          fontSize: session.fontSize,
+          intelliSense: session.intelliSense,
+        };
+      } else {
+        metadata = {
+          language: LANGUAGE.JAVASCRIPT,
+          fontSize: 16,
+          intelliSense: false,
+        };
+      }
+    }
+    this.#_activeSessionMetadata.set(sessionId, metadata);
+    return { doc, awareness, snapshotLoaded, metadata };
   }
   
   private async cleanupSessionMemory(sessionId: string): Promise<void> {
     const doc = this.#_activeDocs.get(sessionId);
     const awareness = this.#_activeAwareness.get(sessionId);
-
     try {
       if (doc) doc.destroy();
       if (awareness) awareness.destroy();
@@ -460,7 +526,6 @@ async joinSession(
     });
   }
 
-
   public async shutdownAndSaveAllSessions(): Promise<void> {
     logger.info(`Graceful shutdown initiated. Saving all active sessions...`);
     const activeSessionIds = Array.from(this.#_activeDocs.keys());
@@ -483,7 +548,9 @@ async joinSession(
             await this.#_snapshotRepo.saveSnapshot(
               sessionId,
               Buffer.from(finalState),
-              metadata.language
+              metadata.language,
+              metadata.fontSize,
+              metadata.intelliSense
             );
             logger.info(`Successfully saved snapshot for session ${sessionId}.`);
           } else {

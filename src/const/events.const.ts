@@ -1,25 +1,34 @@
-export const ClientToServerEvents = {
-  CONTROL_MESSAGE: 'control-message',
-} as const;
+import { ActiveSessionMetadata } from "@/types/document.types";
 
-export const ServerToClientEvents = {
-  CONTROL_MESSAGE: 'control-message',
-  INITIAL_STATE: 'initial-state',
-  ERROR: 'error',
-} as const;
-
-export const ControlMsgType = {
-  DOC_UPDATE: 'doc-update',
-  AWARENESS_UPDATE: 'awareness-update',
+export const MetadataMsgType = {
   CHANGE_LANGUAGE: 'change-language',
   LANGUAGE_CHANGED: 'language-changed', 
-  USER_LEFT: 'user-left',
-  END_SESSION: 'end-session',
+  CHANGE_FONT : 'change-font',
+  FONT_CHANGED : 'font-changed',
+  TOGGLE_INTELLISENSE: 'toggle-intellisense',
+  INTELLISENSE_TOGGLED: 'intellisense-toggled'
 } as const;
 
-export type ControlMsgTypes = typeof ControlMsgType[keyof typeof ControlMsgType];
+export type MetadataMsgTypes = typeof MetadataMsgType[keyof typeof MetadataMsgType];
 
-export interface ControlMessage<T = any> {
-  type: ControlMsgTypes;
-  payload: T;
+export interface MetadataMessage {
+  type: MetadataMsgTypes;
+  payload: Partial<ActiveSessionMetadata>
+}
+
+export const RunCodeMsgTypes = {
+  RUNNING_CODE: 'running-code',
+  RESULT_UPDATED : 'result-updated'
+} as const
+
+export type RunCodeMsgTypes = typeof RunCodeMsgTypes[keyof typeof RunCodeMsgTypes];
+
+export interface ActiveSessionRunCodeData {
+  isRunning : boolean;
+  consoleMessage : string;
+}
+
+export interface RunCodeMessage {
+  type : RunCodeMsgTypes
+  payload : Partial<ActiveSessionRunCodeData>
 }

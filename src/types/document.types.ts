@@ -8,5 +8,10 @@ export type ActiveDocsMap = Map<string, Y.Doc>;
 
 export interface ActiveSessionMetadata {
   language: Language;
-  ownerId: string;
+  fontSize : number;
+  intelliSense : boolean;
+}
+export interface ActiveSessionRunCodeData {
+  isRunning : boolean;
+  consoleMessages : string;
 }
