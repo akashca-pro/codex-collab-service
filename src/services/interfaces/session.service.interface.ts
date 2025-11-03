@@ -1,8 +1,7 @@
 import { RunCodeMessage } from "@/const/events.const";
-import { Language } from "@/const/language.const";
 import { ResponseDTO } from "@/dtos/ResponseDTO";
 import { YjsUpdate } from "@/types/client-server.types";
-import { ActiveSessionMetadata, ActiveSessionRunCodeData } from "@/types/document.types";
+import { ActiveSessionMetadata } from "@/const/events.const";
 import { Socket, Server } from "socket.io";
 
 export interface ISessionService {
@@ -49,4 +48,9 @@ export interface ISessionService {
         update : YjsUpdate
     ) : Promise<void>
 
+    handleChatMessage(
+        socket : Socket,
+        io : Server,
+        content : string
+    ) : Promise<void>
 }

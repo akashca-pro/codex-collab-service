@@ -96,6 +96,14 @@ export class SocketManager {
       await this.#_sessionService.codeExecution(socket, this.#_io, message);
     })
 
+    socket.on('send-chat-message', async (payload : { content : string })=>{
+      if(payload && typeof payload.content === 'string'){
+        await this.#_sessionService.handleChatMessage(socket, this.#_io, payload.content);
+      }else{
+        logger.warn(`Invalid chat message payload from user ${socket.data.userId}`)
+      }
+    })
+
     socket.on('leave-session', async () => {
       await this.#_sessionService.leaveSession(socket, this.#_io);
     })

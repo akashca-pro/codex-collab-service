@@ -1,4 +1,10 @@
-import { ActiveSessionMetadata } from "@/types/document.types";
+import { Language } from '@/const/language.const';
+
+export interface ActiveSessionMetadata {
+  language: Language;
+  fontSize : number;
+  intelliSense : boolean;
+}
 
 export const MetadataMsgType = {
   CHANGE_LANGUAGE: 'change-language',
@@ -16,6 +22,8 @@ export interface MetadataMessage {
   payload: Partial<ActiveSessionMetadata>
 }
 
+// ---------------------------------------
+
 export const RunCodeMsgTypes = {
   RUNNING_CODE: 'running-code',
   RESULT_UPDATED : 'result-updated'
@@ -32,3 +40,20 @@ export interface RunCodeMessage {
   type : RunCodeMsgTypes
   payload : Partial<ActiveSessionRunCodeData>
 }
+
+// -----------------------------------------
+
+export interface ChatMessage {
+  id: string; 
+  userId: string;
+  username: string;
+  firstName : string;
+  avatar : string;
+  content: string; 
+  timestamp: number;
+}
+
+export const ChatMsgEvents = {
+  CLIENT_SEND_MESSAGE: 'send-chat-message', // Client-to-Server
+  SERVER_NEW_MESSAGE: 'new-chat-message',   // Server-to-Client
+} as const;

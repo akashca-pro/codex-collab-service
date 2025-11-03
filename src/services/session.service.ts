@@ -8,7 +8,8 @@ import { ISessionRepo } from '@/db/repos/interfaces/session.repo.interface';
 import { ISessionService } from './interfaces/session.service.interface';
 import { ResponseDTO } from '@/dtos/ResponseDTO';
 import { RedisService } from './Redis.service';
-import { ActiveDocsMap, ActiveSessionMetadata, ActiveSessionRunCodeData } from '@/types/document.types';
+import { ActiveDocsMap } from '@/types/document.types';
+import { ActiveSessionMetadata } from '@/const/events.const'
 import { ISnapshotRepo } from '@/db/repos/interfaces/snapshot.repo.interface';
 import { ServerInitialState, YjsUpdate } from '@/types/client-server.types';
 import { CollaborationOpLog } from '@/types/kafka.types';
@@ -18,7 +19,8 @@ import jwt from 'jsonwebtoken';
 import { InviteTokenPayload } from '@/types/tokenPayload.types';
 import { LANGUAGE } from '@/const/language.const';
 import logger from '@/utils/pinoLogger';
-import { RunCodeMessage } from '@/const/events.const';
+import { ChatMessage, RunCodeMessage } from '@/const/events.const';
+import { randomUUID } from 'node:crypto';
 
 @injectable()
 export class SessionService implements ISessionService  {
@@ -415,11 +417,52 @@ export class SessionService implements ISessionService  {
     ): Promise<void> {
       const { sessionId } = socket.data;
       if(message.type === 'running-code'){
-        io.to(sessionId).emit('code-executing',message);
+        io.to(sessionId).emit('code-executing',message.payload);
       }
       if(message.type === 'result-updated'){
-        io.to(sessionId).emit('code-executed',message);
+        io.to(sessionId).emit('code-executed',message.payload);
       }
+    }
+
+    async handleChatMessage(
+      socket: Socket,
+      io: Server,
+      content: string
+    ): Promise<void> {
+      const { sessionId, userId, username } = socket.data;
+
+      if (!content || content.trim().length === 0) {
+        return;
+      }
+
+      const uniqueId = randomUUID()
+      const awareness = this.#_activeAwareness.get(sessionId);
+      let avatar = '';  
+      let firstName = ''
+
+      if (awareness) {
+          const states = Array.from(awareness.getStates().values());
+          const userState = states.find(state => state.user?.id === userId);
+          if (userState && userState.user?.avatar) {
+            avatar = userState.user.avatar;
+          }
+          if (userState && userState.user?.firstName){
+            firstName = userState.user.firstName
+          }
+        }
+      
+      const message: ChatMessage = {
+        id: uniqueId,
+        userId,
+        username: username || `User_${uniqueId}`,
+        avatar,
+        firstName,
+        content: content.trim(),
+        timestamp: Date.now(),
+      };
+
+      io.to(sessionId).emit('new-chat-message', message);
+      logger.debug(`User ${userId} sent chat message in session ${sessionId}`);
     }
 
   private async getOrLoadSessionState(

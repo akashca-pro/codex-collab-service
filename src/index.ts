@@ -1,4 +1,5 @@
 import https from 'https';
+import http from 'http'
 import fs from 'fs';
 import express from "express";
 import { Server } from "socket.io";
@@ -16,9 +17,9 @@ import { ISessionRepo } from './db/repos/interfaces/session.repo.interface';
 
 // const privateKey = fs.readFileSync('/app/localhost+1-key.pem', 'utf8');
 // const certificate = fs.readFileSync('/app/localhost+1.pem', 'utf8');
-const privateKey = fs.readFileSync('../../localhost+1-key.pem', 'utf8');
-const certificate = fs.readFileSync('../../localhost+1.pem', 'utf8');
-const credentials = { key: privateKey, cert: certificate };
+// const privateKey = fs.readFileSync('../../localhost+1-key.pem', 'utf8');
+// const certificate = fs.readFileSync('../../localhost+1.pem', 'utf8');
+// const credentials = { key: privateKey, cert: certificate };
 
 const app = express();
 const corsOptions = {
@@ -28,7 +29,7 @@ const corsOptions = {
 };
 // app.use(cors(corsOptions));
 app.use(cookieParser());
-const server = https.createServer(credentials, app);
+const server = http.createServer(app);
 const io = new Server(server,{
     cors : corsOptions,
     maxHttpBufferSize: 1e8, // 100 MB max buffer
@@ -71,7 +72,7 @@ const startServer = async () => {
         startGrpcServer()
         const PORT = config.SOCKET_PORT
         server.listen(PORT, () => {
-            logger.info(`HTTPS/Socket.IO server listening on port ${PORT}`);
+            logger.info(`HTTP/Socket.IO server listening on port ${PORT}`);
         });
 
         // Periodic job: mark expired sessions as ENDED
