@@ -1,5 +1,6 @@
 import { ISession } from "@/db/interfaces/session.interface";
 import { BaseRepository } from "../base.repo";
+import { ISessionStats } from "@/dtos/dashboard.dto";
 
 
 /**
@@ -15,4 +16,5 @@ export interface ISessionRepo extends BaseRepository<ISession> {
     removeParticipant(sessionId : string, userId : string) : Promise<boolean>;
     closeSession(sessionId : string, ownerId : string) : Promise<boolean>;
     markExpiredSessionsEnded(now?: Date) : Promise<number>;
+    getSessionStats() : Promise<ISessionStats>
 }

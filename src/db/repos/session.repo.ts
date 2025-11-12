@@ -4,6 +4,7 @@ import { BaseRepository } from "./base.repo";
 import { ISessionRepo } from "./interfaces/session.repo.interface";
 import { STATUS } from '@/const/status.const';
 import { SessionModel } from '../models/session.model';
+import { ISessionStats } from '@/dtos/dashboard.dto';
 
 
 export class SessionRepo extends BaseRepository<ISession> implements ISessionRepo {
@@ -148,6 +149,75 @@ export class SessionRepo extends BaseRepository<ISession> implements ISessionRep
             return modified;
         } catch (error) {
             logger.error(`[REPO] ${operation} failed`, { error, duration: Date.now() - startTime });
+            throw error;
+        }
+    }
+
+    async getSessionStats(): 
+    Promise<ISessionStats> {
+        const startTime = Date.now();
+        const operation = `getSessionStats:${this._model.modelName}`;
+        try {
+            logger.debug(`[REPO] Executing ${operation}`);
+
+            const startOfToday = new Date();
+            startOfToday.setHours(0, 0, 0, 0);
+
+            // 1. Aggregate total sessions by status
+            const totalStats = await this._model.aggregate([
+                {
+                    $group: {
+                        _id: "$status",
+                        count: { $sum: 1 },
+                    },
+                },
+            ]);
+
+            // 2. Aggregate today's sessions by status
+            const todayStats = await this._model.aggregate([
+                {
+                    $match: {
+                        createdAt: { $gte: startOfToday },
+                    },
+                },
+                {
+                    $group: {
+                        _id: "$status",
+                        count: { $sum: 1 },
+                    },
+                },
+            ]);
+
+            // Helper to format the data into object { active: x, ended: y, offline: z }
+            const formatStats = (arr: any[]) =>
+                arr.reduce(
+                    (acc, { _id, count }) => {
+                        acc[_id] = count;
+                        return acc;
+                    },
+                    {
+                        [STATUS.ACTIVE]: 0,
+                        [STATUS.ENDED]: 0,
+                        [STATUS.OFFLINE]: 0,
+                    }
+                );
+
+            const result = {
+                total: formatStats(totalStats),
+                today: formatStats(todayStats),
+            };
+
+            logger.info(`[REPO] ${operation} successful`, {
+                result,
+                duration: Date.now() - startTime,
+            });
+
+            return result;
+        } catch (error) {
+            logger.error(`[REPO] ${operation} failed`, {
+                error,
+                duration: Date.now() - startTime,
+            });
             throw error;
         }
     }

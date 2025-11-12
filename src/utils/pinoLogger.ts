@@ -33,8 +33,6 @@ const baseLogger = {
   info: (msg: string, meta?: any) => baseLogger.log('info', msg, meta),
   warn: (msg: string, meta?: any) => baseLogger.log('warn', msg, meta),
   debug: (msg: string, meta?: any) => baseLogger.log('debug', msg, meta),
-  
-  // 🔑 FIX: Special handling for ERROR
   error: (msg: string, meta?: any) => {
     const traceContext = getTraceContext();
     

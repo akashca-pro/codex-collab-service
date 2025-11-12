@@ -53,4 +53,6 @@ export interface ISessionService {
         io : Server,
         content : string
     ) : Promise<void>
+
+    getSessionStats() : Promise<ResponseDTO>
 }

@@ -608,4 +608,15 @@ export class SessionService implements ISessionService  {
     await Promise.all(savePromises);
     logger.info(`Finished saving ${activeSessionIds.length} active sessions.`);
   }
+
+  async getSessionStats(): Promise<ResponseDTO> {
+    try {
+      const sessionStats = await this.#_sessionRepo.getSessionStats();
+      return { data: sessionStats, success: true };
+    } catch (error) {
+        logger.error('Failed to create session.', { error });
+        return { data: null, success: false, errorMessage: 'A server error occurred while generating session stats.' };
+    }
+  }
+
 }
