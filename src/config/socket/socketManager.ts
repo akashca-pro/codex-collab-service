@@ -8,9 +8,8 @@ import jwt from 'jsonwebtoken';
 import { ISessionService } from '@/services/interfaces/session.service.interface';
 import TYPES from '@/config/inversify/types';
 import { AccessTokenPayload, InviteTokenPayload } from '@/types/tokenPayload.types';
-import { ControlMessage, ControlMsgType } from '@/const/events.const';
 import { parseCookies } from '@/utils/cookieParser';
-import { ActiveSessionMetadata } from '@/types/document.types';
+import { MetadataMessage, MetadataMsgType, RunCodeMessage } from '@/const/events.const';
 
 
 @injectable()
@@ -47,12 +46,8 @@ export class SocketManager {
     const cookies = parseCookies(cookieHeader);
     const accessToken = cookies['accessToken'];
     if (!inviteToken || !accessToken) {
-            let missing = [];
-            if (!inviteToken) missing.push("invite token");
-            if (!accessToken) missing.push("access token (cookie or auth)");
-            logger.warn('Socket Auth Middleware: Missing required tokens.', { missing: missing.join(', ') });
-            return next(new Error(`Authentication error: Missing ${missing.join(' and ')}.`));
-        }
+      return next(new Error("401"));
+    }
     try {
       const decodedInviteId = jwt.verify(inviteToken, config.JWT_INVITE_TOKEN_SECRET) as InviteTokenPayload;
       const decodedAccessToken = jwt.verify(accessToken, config.JWT_ACCESS_TOKEN_SECRET) as AccessTokenPayload;
@@ -63,6 +58,7 @@ export class SocketManager {
       socket.data.ownerId = decodedInviteId.ownerId;
       socket.data.userId = decodedAccessToken.userId;
       socket.data.email = decodedAccessToken.email;
+      socket.data.username = decodedAccessToken.username;
       next();
     } catch (error) {
       logger.error('JWT invite token verification failed', error);
@@ -74,15 +70,12 @@ export class SocketManager {
     const { ownerId, sessionId } = socket.data;
     logger.info(`User with ownerId ${ownerId} authenticated for session ${sessionId} with socket ID: ${socket.id}`);
 
-    if (!(await this.#_io.in(sessionId).fetchSockets()).find(r => r.id === socket.id)) {
-        await this.#_sessionService.joinSession(socket, this.#_io);
-    }
+    // Always invoke joinSession on new connection/reconnection; it is idempotent and ensures initial-state
+    await this.#_sessionService.joinSession(socket, this.#_io);
     socket.on('doc-update', async (update : any) => {
       const docUpdate = update instanceof Uint8Array 
         ? update 
         : new Uint8Array(Buffer.isBuffer(update) ? update : Buffer.from(update));
-        console.log(update);
-        console.log(docUpdate)
       await this.#_sessionService.updateDocument(socket, docUpdate, this.#_io);
     })
 
@@ -93,12 +86,26 @@ export class SocketManager {
       await this.#_sessionService.handleAwarenessUpdate(socket, awarenessUpdate);
     })
 
-    socket.on('metadata-changed', async (update : ActiveSessionMetadata) => {
-      await this.#_sessionService.changeLanguage(socket, this.#_io, update.language)
+    socket.on('change-metadata', async ( message : MetadataMessage) => {
+      logger.debug(`[SocketManager] Received change-metadata event from user ${socket.data.userId}: ${message.type}`);
+      await this.#_sessionService.changeMetadata(socket, this.#_io, message.payload)
+    })
+
+    socket.on('code-execution', async (message : RunCodeMessage) => {
+      logger.debug(`[SocketManager] Received code-execution event from user ${socket.data.userId}: ${message.type}`);
+      await this.#_sessionService.codeExecution(socket, this.#_io, message);
+    })
+
+    socket.on('send-chat-message', async (payload : { content : string })=>{
+      if(payload && typeof payload.content === 'string'){
+        await this.#_sessionService.handleChatMessage(socket, this.#_io, payload.content);
+      }else{
+        logger.warn(`Invalid chat message payload from user ${socket.data.userId}`)
+      }
     })
 
     socket.on('leave-session', async () => {
-      await this.#_sessionService.leaveSession(socket);
+      await this.#_sessionService.leaveSession(socket, this.#_io);
     })
 
     socket.on('close-session', async () => {
@@ -107,7 +114,7 @@ export class SocketManager {
 
     socket.on('disconnect', async () => {
       logger.info(`User disconnected: ${ownerId}`);
-      await this.#_sessionService.leaveSession(socket);
+      await this.#_sessionService.leaveSession(socket, this.#_io);
     });
   }
 }

@@ -6,6 +6,7 @@ export interface InviteTokenPayload {
 export interface AccessTokenPayload {
     userId : string;
     email : string;
+    username : string;
     role : string;
     accessTokenId : string;
     accessTokenExp : string;

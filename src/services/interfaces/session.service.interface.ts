@@ -1,6 +1,7 @@
-import { Language } from "@/const/language.const";
+import { RunCodeMessage } from "@/const/events.const";
 import { ResponseDTO } from "@/dtos/ResponseDTO";
 import { YjsUpdate } from "@/types/client-server.types";
+import { ActiveSessionMetadata } from "@/const/events.const";
 import { Socket, Server } from "socket.io";
 
 export interface ISessionService {
@@ -27,12 +28,19 @@ export interface ISessionService {
 
     leaveSession(
         socket : Socket,
+        io : Server
     ) : Promise<void>
 
-    changeLanguage(
-      socket: Socket,
-      io: Server,
-      language: Language
+    changeMetadata (
+        socket : Socket,
+        io : Server,
+        message : Partial<ActiveSessionMetadata>
+    ) : Promise<void>
+
+    codeExecution (
+        socket : Socket,
+        io : Server,
+        message : RunCodeMessage
     ) : Promise<void>
 
     handleAwarenessUpdate(
@@ -40,4 +48,11 @@ export interface ISessionService {
         update : YjsUpdate
     ) : Promise<void>
 
+    handleChatMessage(
+        socket : Socket,
+        io : Server,
+        content : string
+    ) : Promise<void>
+
+    getSessionStats() : Promise<ResponseDTO>
 }

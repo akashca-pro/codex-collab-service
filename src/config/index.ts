@@ -19,6 +19,8 @@ interface Config {
     PODNAME : string;
     GRPC_COLLAB_SERVICE_URL : string;
     SOCKET_PORT : number;
+    SNAPSHOT_TTL_SECONDS : number;
+    JWT_INVITE_TOKEN_EXPIRY : string;
 }
 
 export const config : Config = {
@@ -39,4 +41,6 @@ export const config : Config = {
     PODNAME : process.env.PODNAME!,
     GRPC_COLLAB_SERVICE_URL : process.env.GRPC_COLLAB_SERVICE_URL!,
     SOCKET_PORT : Number(process.env.SOCKET_PORT),
+    SNAPSHOT_TTL_SECONDS : Number(process.env.SNAPSHOT_TTL_SECONDS),
+    JWT_INVITE_TOKEN_EXPIRY : process.env.JWT_INVITE_TOKEN_EXPIRY!,
 }

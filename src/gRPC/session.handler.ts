@@ -2,11 +2,12 @@ import TYPES from "@/config/inversify/types";
 import { ISessionService } from "@/services/interfaces/session.service.interface";
 import { withGrpcErrorHandler } from "@/utils/errorHandler";
 import { inject, injectable } from "inversify";
-import { CreateSessionRequest, CreateSessionResponse }
+import { CreateSessionRequest, CreateSessionResponse, GetSessionStatsResponse }
 from "@akashcapro/codex-shared-utils/dist/proto/compiled/gateway/collab";
 import logger from "@/utils/pinoLogger";
 import { mapMessageToGrpcStatus } from "@/utils/mapMessageToGrpcCode";
 import { UntypedServiceImplementation } from "@grpc/grpc-js";
+import { Empty } from "@akashcapro/codex-shared-utils/dist/proto/compiled/google/protobuf/empty";
 
 /**
  * Class responsible for handling session-related gRPC requests.
@@ -41,9 +42,27 @@ export class SessionHandler {
         }
     )
 
+    getSessionStats = withGrpcErrorHandler<Empty, GetSessionStatsResponse>(
+        async (call, callback) => {
+            const method = 'getSessionStats';
+            logger.info(`[gRPC] ${method} started`);
+            const result = await this.#_sessionService.getSessionStats();
+            if(!result.success){
+                logger.warn(`[gRPC] ${method} failed: ${result.errorMessage}`);
+                return callback({
+                    code : mapMessageToGrpcStatus(result.errorMessage!),
+                    message : result.errorMessage
+                },null);
+            }
+            logger.info(`[gRPC] ${method} completed successfully`);
+            return callback(null, result.data);
+        }
+    )
+
     getServiceHandlers() : UntypedServiceImplementation {
         return {
-            createSession : this.createSession
+            createSession : this.createSession,
+            getSessionStats : this.getSessionStats
         }
     }
 }

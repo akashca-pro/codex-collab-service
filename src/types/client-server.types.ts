@@ -3,14 +3,6 @@ export type YjsUpdate = Uint8Array;
 
 // --- Client-to-Server Event Payloads ---
 
-/**
- * Payload for sending a new text chat message.
- * @event 'chat-message'
- */
-export interface ClientChatMessage {
-  text: string;
-}
-
 
 // --- Server-to-Client Event Payloads ---
 
@@ -24,15 +16,6 @@ export interface ServerInitialState {
   awarenessUpdate: YjsUpdate;
 }
 
-/**
- * Payload for a broadcasted chat message from another user.
- * @event 'chat-message'
- */
-export interface ServerBroadcastChatMessage {
-  from: string; // userId of the sender
-  text: string;
-  timestamp: string; 
-}
 
 /**
  * Payload for an error message sent from the server.
@@ -41,4 +24,12 @@ export interface ServerBroadcastChatMessage {
 export interface ServerError {
   message: string;
   code?: number;
+}
+
+export interface CollabUserInfo {
+  id : string;
+  username : string;
+  firstName : string;
+  avatar : string;
+  isTyping: false
 }

@@ -1,4 +1,3 @@
-import { Language } from '@/const/language.const';
 import * as Y from 'yjs';
 
 /**
@@ -6,7 +5,3 @@ import * as Y from 'yjs';
  */
 export type ActiveDocsMap = Map<string, Y.Doc>;
 
-export interface ActiveSessionMetadata {
-  language: Language;
-  ownerId: string;
-}
