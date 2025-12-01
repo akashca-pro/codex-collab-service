@@ -13,7 +13,7 @@ import { ISessionRepo } from './db/repos/interfaces/session.repo.interface';
 
 const app = express();
 const corsOptions = {
-  origin: config.CLIENT_URL,
+  origin: [config.CLIENT_URL_1, config.CLIENT_URL_2],
   credentials: true,
   methods : ['GET','POST']
 };
