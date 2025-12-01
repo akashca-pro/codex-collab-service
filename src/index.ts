@@ -1,6 +1,4 @@
-import https from 'https';
 import http from 'http'
-import fs from 'fs';
 import express from "express";
 import { Server } from "socket.io";
 import container from "./config/inversify/container";
@@ -11,23 +9,15 @@ import cookieParser from 'cookie-parser';
 import logger from "./utils/pinoLogger";
 import { connectDB } from "./config/db";
 import { config } from "./config";
-import { KafkaManager } from './config/kafka/kafkaManager';
-import { KafkaTopics } from './config/kafka/kafkaTopic';
 import { ISessionRepo } from './db/repos/interfaces/session.repo.interface';
-
-// const privateKey = fs.readFileSync('/app/localhost+1-key.pem', 'utf8');
-// const certificate = fs.readFileSync('/app/localhost+1.pem', 'utf8');
-// const privateKey = fs.readFileSync('../../localhost+1-key.pem', 'utf8');
-// const certificate = fs.readFileSync('../../localhost+1.pem', 'utf8');
-// const credentials = { key: privateKey, cert: certificate };
 
 const app = express();
 const corsOptions = {
-  origin: config.CLIENT_URL,
+  origin: [config.CLIENT_URL_1, config.CLIENT_URL_2],
   credentials: true,
   methods : ['GET','POST']
 };
-// app.use(cors(corsOptions));
+
 app.use(cookieParser());
 const server = http.createServer(app);
 const io = new Server(server,{
@@ -42,29 +32,11 @@ const io = new Server(server,{
 });
 
 const socketManager = container.get<SocketManager>(TYPES.SocketManager);
-const kafkaManager = container.get<KafkaManager>(TYPES.KafkaManager);
 const sessionRepo = container.get<ISessionRepo>(TYPES.ISessionRepo);
 
 const startServer = async () => {
     try {
         connectDB()
-        // // kafka core setup
-        // logger.info('Initializing Kafka Manager...');
-        // await kafkaManager.init();
-        // logger.info('Kafka Manager initialized successfully.');
-
-        // // // create topics
-        // logger.info('Creating necessary Kafka topics...');
-        // const topicsToCreate = [
-        //     KafkaTopics.COLLABORATION_OPS_LOG,
-        // ]
-
-        // for (const topic of topicsToCreate) {
-        //     await kafkaManager.createTopic(topic);
-        //     logger.debug(`Kafka topic created: ${topic}`);
-        // }
-        // logger.info('All necessary Kafka topics created.');
-
         logger.info('Initializing socket manager...')
         await socketManager.init(io);
         logger.info('Socket manager initilized successfully');

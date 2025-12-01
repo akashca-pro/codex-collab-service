@@ -20,7 +20,7 @@ echo "==========================================="
 
 # --- 3. Build the Docker Image ---
 echo "⚙️  Building Docker image: $FULL_TAG"
-docker build --no-cache -t "$FULL_TAG" .
+docker build -t "$FULL_TAG" .
 
 # Check if the build was successful
 if [ $? -ne 0 ]; then

@@ -7,7 +7,8 @@ interface Config {
     SERVICE_NAME : string;
     WSS_PORT : number;
     JWT_ACCESS_TOKEN_SECRET : string;
-    CLIENT_URL : string;
+    CLIENT_URL_1 : string;
+    CLIENT_URL_2 : string;
     TOKEN_NAME : string;
     SOCKET_MAP_CACHE_EXPIRY : number;
     KAFKA_COLLAB_SERVICE_CLIENT_ID: string;
@@ -29,7 +30,8 @@ export const config : Config = {
     SERVICE_NAME : 'COLLAB_SERVICE',
     WSS_PORT : Number(process.env.WSS_PORT),
     JWT_ACCESS_TOKEN_SECRET : process.env.JWT_ACCESS_TOKEN_SECRET || '',
-    CLIENT_URL : process.env.CLIENT_URL || '',
+    CLIENT_URL_1 : process.env.CLIENT_URL_1 || '',
+    CLIENT_URL_2 : process.env.CLIENT_URL_2 || '',
     TOKEN_NAME : process.env.TOKEN_NAME || '' ,
     SOCKET_MAP_CACHE_EXPIRY : Number(process.env.SOCKET_MAP_CACHE_EXPIRY),
     KAFKA_COLLAB_SERVICE_CLIENT_ID: process.env.KAFKA_COLLAB_SERVICE_CLIENT_ID!,
