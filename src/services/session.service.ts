@@ -22,6 +22,12 @@ import logger from '@/utils/pinoLogger';
 import { ChatMessage, RunCodeMessage } from '@/const/events.const';
 import { randomUUID } from 'node:crypto';
 
+interface SessionLocalState {
+    isDirty: boolean; // Has changed since last Redis save?
+    persistenceInterval?: NodeJS.Timeout; // Loop to save TO Redis
+    healingInterval?: NodeJS.Timeout;     // Loop to read FROM Redis
+}
+
 @injectable()
 export class SessionService implements ISessionService  {
     #_sessionRepo : ISessionRepo
@@ -31,6 +37,7 @@ export class SessionService implements ISessionService  {
     #_activeDocs : ActiveDocsMap = new Map();
     #_activeAwareness: Map<string, Awareness> = new Map(); 
     #_activeSessionMetadata: Map<string, ActiveSessionMetadata> = new Map();
+    #_sessionStates: Map<string, SessionLocalState> = new Map();
 
     constructor(
         @inject(TYPES.ISessionRepo) sessionRepo : ISessionRepo,
@@ -194,6 +201,7 @@ export class SessionService implements ISessionService  {
         if (awareness) {
             applyAwarenessUpdate(awareness, update, socket.id);
           socket.to(sessionId).emit('awareness-update', update);
+          await this.#_redisService.publishUpdate(`session:${sessionId}:awareness`, update);
         }else{
           logger.warn(`No awareness found for session ${sessionId} during handleAwarenessUpdate`);
           return;
@@ -207,8 +215,14 @@ export class SessionService implements ISessionService  {
     ): Promise<void> {
         const { sessionId } = socket.data;
         const { doc } = await this.getOrLoadSessionState(sessionId, io);
+        // Apply locally
         Y.applyUpdate(doc, update, socket.id);
+        // Broadcast (HOT Path)
         socket.to(sessionId).emit('doc-update', update);
+        await this.#_redisService.publishUpdate(`session:${sessionId}:doc`, update);
+        // 3. Mark as Dirty (Triggering the background save to Redis)
+        const state = this.#_sessionStates.get(sessionId);
+        if (state) state.isDirty = true;
     }
 
     async leaveSession(
@@ -269,6 +283,8 @@ export class SessionService implements ISessionService  {
                   await this.#_sessionRepo.updateSessionDetails(sessionId, { status: 'offline' as any });
                 }
               }
+              await this.#_redisService.publishControlMessage(sessionId, { type: 'DESTROY' });
+              logger.info(`Sent distributed DESTROY signal for session ${sessionId}`);
             }
           } catch {}
           const doc = this.#_activeDocs.get(sessionId);
@@ -470,6 +486,9 @@ export class SessionService implements ISessionService  {
     io : Server
   ) : Promise<{doc: Y.Doc, awareness: Awareness, snapshotLoaded: boolean, metadata : ActiveSessionMetadata }> {
     if (this.#_activeDocs.has(sessionId) ) {
+        if (!this.#_sessionStates.has(sessionId)) {
+              this.initSessionLoops(sessionId);
+        }
         return {
             doc: this.#_activeDocs.get(sessionId)!,
             awareness: this.#_activeAwareness.get(sessionId)!,
@@ -486,7 +505,9 @@ export class SessionService implements ISessionService  {
     const awareness = new Awareness(doc);
     this.#_activeAwareness.set(sessionId, awareness);
 
-    // This is for restore the session if all users disconnect by network issue.
+    await this.setupRedisSync(sessionId, doc, awareness);
+
+    // This is for restore the session if all users disconnect by network.
     const snapshot = await this.#_snapshotRepo.getLatestSnapshot(sessionId);
       if (snapshot) {
           const snapUint8 = snapshot instanceof Uint8Array 
@@ -517,10 +538,71 @@ export class SessionService implements ISessionService  {
       }
     }
     this.#_activeSessionMetadata.set(sessionId, metadata);
+
+    await this.#_redisService.subscribeToControl(sessionId, async (msg) => {
+        if (msg.type === 'DESTROY') {
+            logger.info(`Received distributed DESTROY signal for session ${sessionId}`);
+            await this.cleanupSessionMemory(sessionId); 
+        }
+    });
+
+    this.initSessionLoops(sessionId);
+
     return { doc, awareness, snapshotLoaded, metadata };
   }
+
+    private initSessionLoops(sessionId: string) {
+        if (this.#_sessionStates.has(sessionId)) return;
+
+        const state: SessionLocalState = { isDirty: false };
+        this.#_sessionStates.set(sessionId, state);
+
+        // A. PERSISTENCE LOOP (Save TO Redis)
+        // Runs every 2 seconds. Only saves if data changed.
+        state.persistenceInterval = setInterval(async () => {
+            const s = this.#_sessionStates.get(sessionId);
+            const doc = this.#_activeDocs.get(sessionId);
+            
+            if (s && s.isDirty && doc) {
+                try {
+                    // Encode full state
+                    const snapshot = Y.encodeStateAsUpdate(doc);
+                    // Save to Redis with 24h TTL
+                    await this.#_redisService.saveSnapshot(sessionId, snapshot, 86400);
+                    s.isDirty = false; // Reset flag
+                    logger.debug(`Saved snapshot to Redis for ${sessionId}`);
+                } catch (err) {
+                    logger.error(`Failed to save to Redis for ${sessionId}`, err);
+                }
+            }
+        }, 2000);
+
+        // B. HEALING LOOP (Read FROM Redis)
+        // Runs every 5 seconds. Pulls latest state from Redis to fix missing packets.
+        state.healingInterval = setInterval(async () => {
+             const doc = this.#_activeDocs.get(sessionId);
+             if (!doc) return;
+
+             try {
+                 const remoteSnapshot = await this.#_redisService.getSnapshot(sessionId);
+                 if (remoteSnapshot) {
+                     // 'healing' origin prevents infinite loops
+                     Y.applyUpdate(doc, remoteSnapshot, 'healing');
+                 }
+             } catch (err) {
+                 logger.warn(`Healing failed for ${sessionId}`, err);
+             }
+        }, 5000);
+    }
   
   private async cleanupSessionMemory(sessionId: string): Promise<void> {
+    const state = this.#_sessionStates.get(sessionId);
+    if (state) {
+        clearInterval(state.persistenceInterval);
+        clearInterval(state.healingInterval);
+        this.#_sessionStates.delete(sessionId);
+    }
+    await this.#_redisService.unsubscribeFromSession(sessionId);
     const doc = this.#_activeDocs.get(sessionId);
     const awareness = this.#_activeAwareness.get(sessionId);
     try {
@@ -533,6 +615,40 @@ export class SessionService implements ISessionService  {
     } catch (err) {
       logger.error(`Error cleaning up local state for session ${sessionId}`, err);
     }
+  }
+
+  private async setupRedisSync(sessionId: string, doc: Y.Doc, awareness: Awareness) {
+          
+      // Listen to updates from Redis (originating from OTHER pods)
+      await this.#_redisService.subscribeToSession(sessionId, (type, data) => {
+          if (type === 'doc') {
+              // Apply update to local Doc. 
+              // CRITICAL: origin is 'redis'. This prevents loops.
+              Y.applyUpdate(doc, data, 'redis');
+          } else if (type === 'awareness') {
+              applyAwarenessUpdate(awareness, data, 'redis');
+          }
+      });
+
+      // Listen for LOCAL updates (triggered by Y.applyUpdate above OR by client socket)
+      // We only publish to Redis if the update didn't come FROM Redis or Snapshot.
+      doc.on('update', (update: Uint8Array, origin: any) => {
+          if (origin !== 'redis' && origin !== 'snapshot-load') {
+              // This update happened on this pod (via client or internal logic).
+              // We must tell other pods.
+              this.#_redisService.publishUpdate(`session:${sessionId}:doc`, update)
+                  .catch(err => logger.error(`Failed to publish doc update for ${sessionId}`, err));
+          }
+      });
+
+      // Listen for LOCAL awareness changes
+      awareness.on('update', ({ added, updated, removed }: any, origin: any) => {
+          if (origin !== 'redis' && origin !== 'server-join-cleanup') {
+              const update = encodeAwarenessUpdate(awareness, added.concat(updated).concat(removed));
+              this.#_redisService.publishUpdate(`session:${sessionId}:awareness`, update)
+                  .catch(err => logger.error(`Failed to publish awareness update for ${sessionId}`, err));
+          }
+      });
   }
 
   private async restoreSession(sessionId: string, io: Server) : Promise<{ doc: Y.Doc; awareness: Awareness; snapshotLoaded: boolean } | null> {
